@@ -130,8 +130,9 @@ function LoginView({ setAuth }: any) {
     try {
       const res = await axios.post("/api", { action: "LOGIN", password: pwd });
       setAuth(res.data.token);
-    } catch (e) {
-      alert("登入失敗：密碼錯誤");
+    } catch (e: any) {
+      // 這樣可以顯示後端傳來的真實錯誤原因
+      alert("登入失敗：" + (e.response?.data?.error || e.message));
     }
   };
   return (
