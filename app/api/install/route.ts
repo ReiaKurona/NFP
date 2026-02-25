@@ -7,7 +7,6 @@ export async function GET(req: Request) {
   const defaultPanel = host ? `${protocol}://${host}` : "";
   const panelUrl = searchParams.get("panel") || defaultPanel;
 
-  // 這是 Bash 腳本，它會自動寫入並運行 Python Agent
   const script = `#!/bin/bash
 
 # 定義顏色
@@ -17,7 +16,7 @@ YELLOW='\\033[0;33m'
 BLUE='\\033[0;34m'
 NC='\\033[0m'
 
-echo -e "\${BLUE}[AeroNode] 開始安裝 V4.0 (Python 極速版)... \${NC}"
+echo -e "\${BLUE}[AeroNode] 開始安裝 V4.1 (Python 虛擬環境版)... \${NC}"
 
 # 1. 參數解析
 TOKEN=""
@@ -42,50 +41,48 @@ fi
 INSTALL_DIR="/opt/aero-agent"
 SERVICE_NAME="aero-agent"
 
-# 2. 檢查 Python 環境
-echo -e "\${BLUE}[1/4] 檢查 Python 環境...\${NC}"
+# 2. 強制安裝 Python3 和 venv 模組
+echo -e "\${BLUE}[1/4] 準備 Python 環境...\${NC}"
 
-if ! command -v python3 &> /dev/null; then
-    echo -e "\${YELLOW}未檢測到 Python3，正在安裝...\${NC}"
+install_packages() {
     if [ -f /etc/debian_version ]; then
-        apt-get update && apt-get install -y python3 python3-pip
+        apt-get update -q
+        # 同時安裝 python3-full 以確保有 venv
+        apt-get install -y -q python3 python3-pip python3-venv python3-full
     elif [ -f /etc/redhat-release ]; then
         yum install -y python3 python3-pip
     elif [ -f /etc/alpine-release ]; then
         apk add python3 py3-pip
-    else
-        echo -e "\${RED}無法自動安裝 Python，請手動安裝 python3 和 pip。\${NC}"
-        exit 1
     fi
-fi
+}
 
-# 3. 安裝加密依賴 (PyCryptodome)
-echo -e "\${BLUE}[2/4] 安裝依賴庫...\${NC}"
-# 嘗試切換 pip 國內源
-pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple > /dev/null 2>&1
-
-# 兼容新版 Linux 的 pip 限制
-PIP_ARGS=""
-if pip3 install --help | grep -q "break-system-packages"; then
-    PIP_ARGS="--break-system-packages"
-fi
-
-if ! pip3 install pycryptodome requests $PIP_ARGS; then
-    echo -e "\${YELLOW}pip 安裝失敗，嘗試使用系統包管理器...\${NC}"
-    if [ -f /etc/debian_version ]; then
-        apt-get install -y python3-pycryptodome
-    elif [ -f /etc/alpine-release ]; then
-        apk add py3-pycryptodome
-    else
-        echo -e "\${RED}依賴安裝失敗，請手動運行: pip3 install pycryptodome\${NC}"
-        exit 1
-    fi
+# 即使有 python3 也要確保有 pip 和 venv
+if ! command -v pip3 &> /dev/null || ! python3 -m venv --help &> /dev/null; then
+    echo -e "\${YELLOW}正在補全 Python 組件 (pip/venv)...\${NC}"
+    install_packages
 fi
 
 mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
 
-# 4. 寫入 Python Agent 腳本
+# 3. 創建虛擬環境並安裝依賴 (關鍵修復)
+echo -e "\${BLUE}[2/4] 構建虛擬環境 (解決依賴衝突)...\${NC}"
+
+# 刪除舊環境以防萬一
+rm -rf venv
+
+# 創建 venv
+python3 -m venv venv
+
+# 激活 venv 並安裝依賴
+# 使用 venv 裡的 pip，無需 root 權限，也不受系統限制
+./venv/bin/pip install --upgrade pip --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+if ! ./venv/bin/pip install pycryptodome requests --index-url https://pypi.tuna.tsinghua.edu.cn/simple; then
+    echo -e "\${RED}依賴安裝失敗！\${NC}"
+    exit 1
+fi
+
+# 4. 寫入 Python Agent 代碼
 echo -e "\${BLUE}[3/4] 部署 Agent 代碼...\${NC}"
 
 cat > config.json <<EOF
@@ -101,10 +98,15 @@ import urllib.request
 import urllib.parse
 import subprocess
 import os
-from Crypto.Cipher import AES
-from Crypto.Hash import SHA256
 
-# 配置加載
+# 嘗試導入加密庫
+try:
+    from Crypto.Cipher import AES
+    from Crypto.Hash import SHA256
+except ImportError:
+    print("CRITICAL: PyCryptodome not installed correctly.")
+    sys.exit(1)
+
 try:
     with open("config.json", "r") as f:
         CONFIG = json.load(f)
@@ -112,7 +114,6 @@ except:
     print("Config file not found")
     sys.exit(1)
 
-# 加密工具類
 class CryptoUtils:
     @staticmethod
     def decrypt(encrypted_hex, iv_hex, token):
@@ -120,11 +121,8 @@ class CryptoUtils:
             key = SHA256.new(token.encode('utf-8')).digest()
             ciphertext = bytes.fromhex(encrypted_hex)
             iv = bytes.fromhex(iv_hex)
-            
-            # 拆分 Tag 和 密文 (Node.js GCM 通常是 CipherText + Tag)
             tag = ciphertext[-16:]
             real_ciphertext = ciphertext[:-16]
-            
             cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
             plaintext = cipher.decrypt_and_verify(real_ciphertext, tag)
             return json.loads(plaintext.decode('utf-8'))
@@ -132,7 +130,6 @@ class CryptoUtils:
             print(f"Decryption failed: {e}")
             return None
 
-# 系統操作類
 class SystemUtils:
     @staticmethod
     def get_stats():
@@ -141,7 +138,7 @@ class SystemUtils:
                 load = f.read().split()[0]
         except:
             load = "0.0"
-        return {"cpu_load": load, "goroutines": 1} # Python 單線程
+        return {"cpu_load": load, "goroutines": 1}
 
     @staticmethod
     def run_nft_cmd(cmd):
@@ -157,11 +154,9 @@ class SystemUtils:
             dip = r["dest_ip"]
             dport = r["dest_port"]
             
-            # PREROUTING (DNAT)
             dnat = f"nft add rule ip nat PREROUTING {p} dport {sport} counter dnat to {dip}:{dport}"
             SystemUtils.run_nft_cmd(dnat)
             
-            # POSTROUTING (SNAT/Masquerade)
             snat = f"nft add rule ip nat POSTROUTING ip daddr {dip} {p} dport {dport} counter masquerade"
             SystemUtils.run_nft_cmd(snat)
 
@@ -171,7 +166,6 @@ class SystemUtils:
         SystemUtils.run_nft_cmd("nft add chain ip nat PREROUTING { type nat hook prerouting priority -100; }")
         SystemUtils.run_nft_cmd("nft add chain ip nat POSTROUTING { type nat hook postrouting priority 100; }")
 
-# 網絡請求類
 class NetworkClient:
     @staticmethod
     def heartbeat():
@@ -181,16 +175,13 @@ class NetworkClient:
                 "token": CONFIG["token"],
                 "stats": SystemUtils.get_stats()
             }
-            # Base64 URL Safe Encoding
             json_bytes = json.dumps(payload).encode('utf-8')
             b64_data = base64.b64encode(json_bytes).decode('utf-8')
-            # 再次 URL Encode 確保 + 號不丟失
             safe_data = urllib.parse.quote(b64_data)
             
             url = f"{CONFIG['panel_url']}/api?action=HEARTBEAT&data={safe_data}"
             req = urllib.request.Request(url)
-            # 偽裝 User-Agent 防止被 Vercel 攔截
-            req.add_header('User-Agent', 'AeroNode-Agent/4.0')
+            req.add_header('User-Agent', 'AeroNode-Agent/4.1')
             
             with urllib.request.urlopen(req, timeout=10) as resp:
                 if resp.status == 200:
@@ -212,57 +203,49 @@ class NetworkClient:
             
             req = urllib.request.Request(url, data=data, method="POST")
             req.add_header('Content-Type', 'application/json')
-            req.add_header('User-Agent', 'AeroNode-Agent/4.0')
+            req.add_header('User-Agent', 'AeroNode-Agent/4.1')
             
             with urllib.request.urlopen(req, timeout=10) as resp:
                 raw = json.loads(resp.read().decode('utf-8'))
-                # 解密
                 decrypted = CryptoUtils.decrypt(raw['payload'], raw['iv'], CONFIG['token'])
                 if decrypted and 'rules' in decrypted:
                     SystemUtils.apply_rules(decrypted['rules'])
-                    print("Rules updated successfully")
+                    print("Rules updated")
         except Exception as e:
             print(f"Fetch Config Error: {e}")
 
-# 主程序
 def main():
     print("AeroNode Python Agent Started")
     SystemUtils.init_nftables()
-    
     while True:
         resp = NetworkClient.heartbeat()
         interval = 60
-        
         if resp:
             if resp.get("success"):
                 interval = resp.get("interval", 60)
                 if resp.get("has_cmd"):
                     NetworkClient.fetch_config()
-            else:
-                print(f"Server returned error: {resp}")
-        
         time.sleep(interval)
 
 if __name__ == "__main__":
     main()
 PYEOF
 
-# 5. 創建服務
+# 5. 創建服務 (使用 venv 中的 python)
 echo -e "\${BLUE}[4/4] 啟動服務...\${NC}"
 
-# 找到 python3 的絕對路徑
-PY_BIN=$(command -v python3)
+# 使用虛擬環境中的 Python 解釋器
+VENV_PYTHON="$INSTALL_DIR/venv/bin/python"
 
 cat > /etc/systemd/system/$SERVICE_NAME.service <<EOF
 [Unit]
 Description=AeroNode Python Agent
 After=network.target
 [Service]
-ExecStart=$PY_BIN -u $INSTALL_DIR/agent.py
+ExecStart=$VENV_PYTHON -u $INSTALL_DIR/agent.py
 WorkingDirectory=$INSTALL_DIR
 Restart=always
 RestartSec=5
-# 確保緩衝區立即輸出，方便看日誌
 Environment=PYTHONUNBUFFERED=1
 [Install]
 WantedBy=multi-user.target
@@ -275,14 +258,12 @@ systemctl restart $SERVICE_NAME
 sleep 2
 if systemctl is-active --quiet $SERVICE_NAME; then
     echo -e "\n\${GREEN}✅ 安裝成功！Agent 正在運行。\${NC}"
-    echo -e "Python 路徑: $PY_BIN"
-    echo -e "Agent 目錄: $INSTALL_DIR"
 else
     echo -e "\n\${RED}❌ 啟動失敗，請檢查日誌：\${NC}"
     journalctl -u $SERVICE_NAME -n 10 --no-pager
-    # 嘗試手動運行一次看報錯
+    # 手動診斷
     echo -e "\n嘗試手動運行診斷:"
-    $PY_BIN $INSTALL_DIR/agent.py
+    $VENV_PYTHON $INSTALL_DIR/agent.py
 fi
 `;
 
