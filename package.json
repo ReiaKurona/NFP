@@ -1,6 +1,6 @@
 {
-  "name": "nft-panel",
-  "version": "1.0.0",
+  "name": "aero-panel",
+  "version": "2.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -14,10 +14,12 @@
     "react-dom": "latest",
     "@vercel/kv": "latest",
     "axios": "latest",
-    "crypto": "latest",
     "clsx": "latest",
     "tailwind-merge": "latest",
-    "lucide-react": "latest"
+    "lucide-react": "latest",
+    "framer-motion": "latest",
+    "otplib": "latest",
+    "qrcode.react": "latest"
   },
   "devDependencies": {
     "autoprefixer": "latest",
