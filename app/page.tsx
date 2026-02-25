@@ -357,63 +357,117 @@ function NodesView({ nodes, api, fetchAllData }: any) {
   );
 }
 
-// 規則管理 (優化輸入框 Label 顯示)
+// 規則管理 (修復輸入閃爍問題)
 function RulesView({ nodes, allRules, api, fetchAllData }: any) {
   const [selected, setSelected] = useState<string>(nodes[0]?.id || "");
-  const [rules, setRules] = useState<any[]>([]);
+  
+  // 本地編輯緩存
+  const [localRules, setLocalRules] = useState<any[]>([]);
+  const [isDirty, setIsDirty] = useState(false); // 是否有未保存的修改
+  const [isSaving, setIsSaving] = useState(false);
 
+  // 當切換節點，或後端數據更新且用戶沒在編輯時，同步數據
   useEffect(() => {
-    if (selected) setRules(allRules[selected] || []);
-  }, [selected, allRules]);
+    if (selected && !isDirty) {
+      setLocalRules(allRules[selected] || []);
+    }
+  }, [selected, allRules, isDirty]);
 
-  const handleOptimisticUpdate = async (newRules: any[]) => {
-    setRules(newRules); // 樂觀更新 UI
-    await api("SAVE_RULES", { nodeId: selected, rules: newRules });
-    fetchAllData(); // 後台同步
+  const handleUpdateField = (idx: number, field: string, value: string) => {
+    const newRules = [...localRules];
+    newRules[idx][field] = value;
+    setLocalRules(newRules);
+    setIsDirty(true); // 標記為已修改，阻止自動刷新覆蓋
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const res = await api("SAVE_AND_SYNC", { nodeId: selected, rules: localRules });
+      await fetchAllData();
+      setIsDirty(false); // 保存完成，恢復同步
+      if (res.mode === "pushed") {
+          alert("✅ 規則已通過 [主動模式] 秒級下發！");
+      } else {
+          alert("✅ 規則已保存！\n(主動推送超時，將通過 [被動模式] 在下一次心跳時同步)");
+      }
+    } catch (e: any) {
+      alert("❌ 保存失敗: " + e.message);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   if (nodes.length === 0) return <div className="text-center py-10">請先添加節點</div>;
 
   return (
     <div className="space-y-6">
+      {/* 節點選擇 Tab */}
       <div className="flex overflow-x-auto gap-2 pb-2 hide-scrollbar">
-        {nodes.map((n:any)=><motion.button whileTap={{ scale: 0.95 }} key={n.id} onClick={()=>setSelected(n.id)} className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap ${selected===n.id?'bg-[var(--md-primary)] text-[var(--md-on-primary)]':'bg-[#F0F4EF] dark:bg-[#202522]'}`}>{n.name}</motion.button>)}
+        {nodes.map((n:any)=>(
+            <motion.button 
+                whileTap={{ scale: 0.95 }} 
+                key={n.id} 
+                onClick={()=>{ if(isDirty && !confirm("有未保存的修改，確定切換？")) return; setSelected(n.id); setIsDirty(false); }} 
+                className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap ${selected===n.id?'bg-[var(--md-primary)] text-[var(--md-on-primary)]':'bg-[#F0F4EF] dark:bg-[#202522]'}`}
+            >
+                {n.name}
+            </motion.button>
+        ))}
       </div>
 
       <div className="bg-[#F0F4EF] dark:bg-[#202522] p-5 rounded-[32px] space-y-4">
         <div className="flex justify-between items-center px-2">
-          <span className="font-bold">轉發規則</span>
-          <motion.button whileTap={{ scale: 0.9 }} onClick={()=>handleOptimisticUpdate([...rules,{listen_port:"",dest_ip:"",dest_port:"",protocol:"tcp"}])} className="text-[var(--md-primary)] font-bold bg-[var(--md-primary-container)] px-4 py-1.5 rounded-full text-sm">+ 添加規則</motion.button>
+          <span className="font-bold flex items-center gap-2">
+              轉發規則
+              {isDirty && <span className="text-xs text-amber-500 bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 rounded-full">未保存</span>}
+          </span>
+          <div className="flex gap-2">
+            <motion.button whileTap={{ scale: 0.9 }} onClick={()=>{setLocalRules([...localRules,{listen_port:"",dest_ip:"",dest_port:"",protocol:"tcp"}]); setIsDirty(true);}} className="text-[var(--md-primary)] font-bold bg-[var(--md-primary-container)] px-4 py-2 rounded-full text-sm">
+                + 新增
+            </motion.button>
+            <motion.button 
+                whileTap={{ scale: 0.9 }} 
+                onClick={handleSave} 
+                disabled={isSaving}
+                className={`font-bold px-6 py-2 rounded-full text-sm text-white transition-all ${isSaving ? 'bg-gray-400' : 'bg-emerald-600 shadow-lg shadow-emerald-500/30'}`}
+            >
+                {isSaving ? "下發中..." : "保存並下發"}
+            </motion.button>
+          </div>
         </div>
         
-        {rules.map((r:any, idx:number) => (
+        {localRules.map((r:any, idx:number) => (
           <motion.div layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={idx} className="bg-white dark:bg-[#111318] p-5 rounded-[24px] space-y-4 shadow-sm border border-gray-100 dark:border-white/5">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                <div className="space-y-1">
-                 <label className="text-xs font-bold text-gray-500 ml-1">本地端口 (如 8080 或 1000-2000)</label>
-                 <input value={r.listen_port} onChange={e=>{const n=[...rules];n[idx].listen_port=e.target.value;setRules(n)}} onBlur={()=>handleOptimisticUpdate(rules)} className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="Port" />
+                 <label className="text-xs font-bold text-gray-500 ml-1">本地端口</label>
+                 <input value={r.listen_port} onChange={e=>handleUpdateField(idx, 'listen_port', e.target.value)} className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="例如 8080" />
                </div>
                <div className="space-y-1">
                  <label className="text-xs font-bold text-gray-500 ml-1">目標 IP</label>
-                 <input value={r.dest_ip} onChange={e=>{const n=[...rules];n[idx].dest_ip=e.target.value;setRules(n)}} onBlur={()=>handleOptimisticUpdate(rules)} className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="IP" />
+                 <input value={r.dest_ip} onChange={e=>handleUpdateField(idx, 'dest_ip', e.target.value)} className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="1.2.3.4" />
                </div>
                <div className="space-y-1">
-                 <label className="text-xs font-bold text-gray-500 ml-1">目標端口 (對應本地)</label>
-                 <input value={r.dest_port} onChange={e=>{const n=[...rules];n[idx].dest_port=e.target.value;setRules(n)}} onBlur={()=>handleOptimisticUpdate(rules)} className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="Port" />
+                 <label className="text-xs font-bold text-gray-500 ml-1">目標端口</label>
+                 <input value={r.dest_port} onChange={e=>handleUpdateField(idx, 'dest_port', e.target.value)} className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="例如 8080" />
                </div>
             </div>
             
             <div className="flex justify-between items-center border-t border-gray-100 dark:border-white/5 pt-3">
               <div className="flex items-center gap-2">
                  <span className="text-xs font-bold text-gray-500">協議:</span>
-                 <select value={r.protocol} onChange={e=>{const n=[...rules];n[idx].protocol=e.target.value;handleOptimisticUpdate(n)}} className="bg-gray-50 dark:bg-[#202522] p-2 rounded-xl text-sm font-bold outline-none">
+                 <select value={r.protocol} onChange={e=>handleUpdateField(idx, 'protocol', e.target.value)} className="bg-gray-50 dark:bg-[#202522] p-2 rounded-xl text-sm font-bold outline-none">
                     <option value="tcp">TCP</option><option value="udp">UDP</option><option value="tcp,udp">TCP+UDP</option>
                  </select>
               </div>
-              <motion.button whileTap={{ scale: 0.9 }} onClick={()=>{const n=[...rules];n.splice(idx,1);handleOptimisticUpdate(n)}} className="flex items-center gap-1 text-red-500 bg-red-50 dark:bg-red-900/10 px-3 py-2 rounded-xl text-sm font-bold"><Trash2 className="w-4 h-4"/> 刪除</motion.button>
+              <motion.button whileTap={{ scale: 0.9 }} onClick={()=>{
+                  const n = [...localRules]; n.splice(idx, 1); setLocalRules(n); setIsDirty(true);
+              }} className="flex items-center gap-1 text-red-500 bg-red-50 dark:bg-red-900/10 px-3 py-2 rounded-xl text-sm font-bold"><Trash2 className="w-4 h-4"/> 刪除</motion.button>
             </div>
           </motion.div>
         ))}
+        {localRules.length === 0 && <div className="text-center text-gray-400 py-4">暫無規則，請點擊新增</div>}
       </div>
     </div>
   );
