@@ -3,7 +3,13 @@ import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { motion, AnimatePresence } from "framer-motion";
 import { QRCodeSVG } from "qrcode.react";
-import { Shield, RefreshCw, Trash2, Home, Network, Server, User, LogOut, Palette, PauseCircle, Download, Upload, KeyRound, Smartphone, Save, ArrowRight, Terminal } from "lucide-react";
+import { 
+  Shield, RefreshCw, Trash2, Home, Network, Server, User, LogOut, 
+  Palette, PauseCircle, Download, Upload, KeyRound, Smartphone, 
+  Save, ArrowRight, Terminal 
+} from "lucide-react";
+
+// Material You 主題配色定義
 const THEMES = {
   emerald: { primary: "#006C4C", onPrimary: "#FFFFFF", primaryContainer: "#89F8C7", onPrimaryContainer: "#002114" },
   ocean:   { primary: "#0061A4", onPrimary: "#FFFFFF", primaryContainer: "#D1E4FF", onPrimaryContainer: "#001D36" },
@@ -20,16 +26,22 @@ export default function App() {
   
   const [nodes, setNodes] = useState<any[]>([]);
   const [allRules, setAllRules] = useState<Record<string, any[]>>({});
+  
+  // 休眠機制：防止無操作時消耗過多 Vercel 請求
   const [isActive, setIsActive] = useState(true);
   const idleTimer = useRef<any>(null);
 
+  // 初始化：讀取本地緩存與主題
   useEffect(() => {
     const token = localStorage.getItem("aero_auth");
     if (token) setAuth(token);
+    
     if (localStorage.getItem("aero_theme") === "light") setIsDarkMode(false);
+    
     const savedColor = localStorage.getItem("aero_color") as keyof typeof THEMES;
     if (savedColor && THEMES[savedColor]) setThemeKey(savedColor);
 
+    // 監聽活動，60秒無操作進入休眠
     const resetIdle = () => {
       setIsActive(true);
       clearTimeout(idleTimer.current);
@@ -38,14 +50,19 @@ export default function App() {
     window.addEventListener("mousemove", resetIdle);
     window.addEventListener("touchstart", resetIdle);
     resetIdle();
-    return () => { window.removeEventListener("mousemove", resetIdle); window.removeEventListener("touchstart", resetIdle); };
-  },[]);
+    return () => { 
+      window.removeEventListener("mousemove", resetIdle); 
+      window.removeEventListener("touchstart", resetIdle); 
+    };
+  }, []);
 
+  // 應用深色模式
   useEffect(() => {
     document.documentElement.classList.toggle("dark", isDarkMode);
     localStorage.setItem("aero_theme", isDarkMode ? "dark" : "light");
-  },[isDarkMode]);
+  }, [isDarkMode]);
 
+  // 應用動態主題色
   useEffect(() => {
     const root = document.documentElement;
     const t = THEMES[themeKey];
@@ -56,11 +73,15 @@ export default function App() {
     localStorage.setItem("aero_color", themeKey);
   }, [themeKey]);
 
+  // 核心輪詢邏輯：發送 KEEP_ALIVE + 獲取數據
   useEffect(() => {
     if (auth && isActive && !isFirstLogin) {
       fetchAllData();
-      // 輪詢間隔改為 5 秒，因為現在是讀取 KV 緩存，速度極快且不消耗 Agent 資源
-      const interval = setInterval(() => fetchAllData(), 5000); 
+      // 每 5 秒刷新一次 UI 並發送保活信號
+      const interval = setInterval(() => {
+        fetchAllData();
+        api("KEEP_ALIVE"); // 告訴後端："我正在看面板，讓 Agent 加速刷新"
+      }, 5000);
       return () => clearInterval(interval);
     }
   }, [auth, isActive, isFirstLogin]);
@@ -69,28 +90,40 @@ export default function App() {
     try {
       return (await axios.post("/api", { action, auth, ...data })).data;
     } catch (err: any) {
-      if (err.response?.status === 401) setAuth(null);
+      if (err.response?.status === 401) {
+        setAuth(null);
+        localStorage.removeItem("aero_auth");
+      }
       throw err;
     }
   };
 
   const fetchAllData = async () => {
-    const fetchedNodes = await api("GET_NODES");
-    const nodesArray = Object.values(fetchedNodes);
-    setNodes(nodesArray);
-    const rulesMap: any = {};
-    for (const n of nodesArray as any[]) rulesMap[n.id] = await api("GET_RULES", { nodeId: n.id });
-    setAllRules(rulesMap);
+    try {
+      const fetchedNodes = await api("GET_NODES");
+      const nodesArray = Object.values(fetchedNodes);
+      setNodes(nodesArray);
+      
+      // 獲取規則 (優化性能：只在切換到規則頁面或首次加載時獲取詳細規則)
+      const rulesMap: any = {};
+      for (const n of nodesArray as any[]) {
+        // 簡單緩存策略：如果已有規則且不在規則頁，可以跳過，但為了實時性這裡全量拉取
+        rulesMap[n.id] = await api("GET_RULES", { nodeId: n.id });
+      }
+      setAllRules(rulesMap);
+    } catch (e) { console.error("Fetch data failed", e); }
   };
 
   if (!auth) return <LoginView setAuth={setAuth} setIsFirstLogin={setIsFirstLogin} />;
 
   return (
     <div className="min-h-screen bg-[#FBFDF8] dark:bg-[#111318] text-[#191C1A] dark:text-[#E2E2E5] pb-24 font-sans transition-colors duration-300 overflow-x-hidden">
+      
       <AnimatePresence>
         {isFirstLogin && <ForcePasswordChange api={api} setAuth={setAuth} onComplete={() => setIsFirstLogin(false)} />}
       </AnimatePresence>
 
+      {/* 頂部導航 */}
       <header className="px-6 py-5 flex justify-between items-center sticky top-0 z-10 bg-[#FBFDF8]/80 dark:bg-[#111318]/80 backdrop-blur-xl border-b border-gray-200/50 dark:border-white/5">
         <motion.div className="flex items-center gap-3" whileTap={{ scale: 0.95 }}>
           <div className="p-2 rounded-full" style={{ backgroundColor: 'var(--md-primary-container)', color: 'var(--md-on-primary-container)' }}>
@@ -103,15 +136,23 @@ export default function App() {
         </motion.button>
       </header>
 
+      {/* 休眠提示 */}
       {!isActive && (
         <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mx-4 mt-4 p-3 rounded-2xl bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 flex items-center justify-center gap-2 text-sm font-bold cursor-pointer" onClick={() => setIsActive(true)}>
           <PauseCircle className="w-5 h-5" /> 點擊恢復實時狀態更新
         </motion.div>
       )}
 
+      {/* 主內容區 */}
       <main className="p-4 md:p-6 max-w-4xl mx-auto space-y-6">
         <AnimatePresence mode="wait">
-          <motion.div key={tab} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.2 }}>
+          <motion.div 
+            key={tab} 
+            initial={{ opacity: 0, x: 10 }} 
+            animate={{ opacity: 1, x: 0 }} 
+            exit={{ opacity: 0, x: -10 }} 
+            transition={{ duration: 0.2 }}
+          >
             {tab === "home" && <DashboardView nodes={nodes} allRules={allRules} />}
             {tab === "nodes" && <NodesView nodes={nodes} fetchAllData={fetchAllData} api={api} />}
             {tab === "rules" && <RulesView nodes={nodes} allRules={allRules} fetchAllData={fetchAllData} api={api} />}
@@ -120,6 +161,7 @@ export default function App() {
         </AnimatePresence>
       </main>
 
+      {/* 底部導航 */}
       <nav className="fixed bottom-0 w-full bg-[#F4F8F4] dark:bg-[#191C1A] border-t border-gray-200/50 dark:border-white/5 px-2 py-3 flex justify-around items-center z-50 safe-area-pb">
         <NavItem icon={<Home className="w-6 h-6"/>} label="首頁" active={tab==="home"} onClick={()=>setTab("home")} />
         <NavItem icon={<Network className="w-6 h-6"/>} label="轉發" active={tab==="rules"} onClick={()=>setTab("rules")} />
@@ -130,10 +172,11 @@ export default function App() {
   );
 }
 
+// 導航按鈕組件
 function NavItem({ icon, label, active, onClick }: any) {
   return (
     <motion.button whileTap={{ scale: 0.9 }} onClick={onClick} className="flex flex-col items-center flex-1 gap-1 relative outline-none">
-      <motion.div layout className={`px-5 py-1 rounded-full ${active ? 'bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)]' : 'text-gray-500'}`}>
+      <motion.div layout className={`px-5 py-1 rounded-full transition-colors ${active ? 'bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)]' : 'text-gray-500'}`}>
         {icon}
       </motion.div>
       <span className={`text-[12px] font-medium ${active ? 'text-[var(--md-primary)] font-bold' : 'text-gray-500'}`}>{label}</span>
@@ -150,7 +193,7 @@ function LoginView({ setAuth, setIsFirstLogin }: any) {
       localStorage.setItem("aero_auth", res.data.token);
       setAuth(res.data.token);
       setIsFirstLogin(res.data.isFirstLogin);
-    } catch { alert("密碼或 2FA 驗證碼錯誤"); }
+    } catch { alert("❌ 密碼或 2FA 驗證碼錯誤"); }
   };
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#FBFDF8] dark:bg-[#111318] p-6 text-gray-900 dark:text-white">
@@ -158,7 +201,7 @@ function LoginView({ setAuth, setIsFirstLogin }: any) {
         <div className="text-center space-y-3">
           <Shield className="w-16 h-16 mx-auto text-[#006C4C]" />
           <h1 className="text-3xl font-bold">AeroNode</h1>
-          <p className="text-xs text-gray-500">輸入密碼 或 6位數2FA驗證碼</p>
+          <p className="text-xs text-gray-500">輸入密碼 或 6位數 2FA 驗證碼</p>
         </div>
         <input type="password" value={pwd} onChange={e=>setPwd(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleLogin()} className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl text-center focus:outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="••••••••" />
         <motion.button whileTap={{ scale: 0.95 }} onClick={handleLogin} className="w-full py-4 bg-[var(--md-primary)] text-[var(--md-on-primary)] rounded-full font-bold">登錄</motion.button>
@@ -167,11 +210,11 @@ function LoginView({ setAuth, setIsFirstLogin }: any) {
   );
 }
 
-// 強制改密碼
+// 強制修改密碼彈窗
 function ForcePasswordChange({ api, setAuth, onComplete }: any) {
   const [pwd, setPwd] = useState("");
   const handleSave = async () => {
-    if(pwd.length < 6) return alert("密碼太短");
+    if(pwd.length < 6) return alert("密碼太短，請至少輸入6位");
     const res = await api("CHANGE_PASSWORD", { newPassword: pwd });
     localStorage.setItem("aero_auth", res.token);
     setAuth(res.token);
@@ -218,16 +261,16 @@ function DashboardView({ nodes, allRules }: any) {
                 {isOnline ? '在線' : '離線'}
               </span>
             </div>
-            {/* 流量狀態 (由 Agent 上報) */}
+            
             <div className="grid grid-cols-2 gap-3">
-              <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
-                <span className="text-xs text-gray-500 mb-1">CPU 負載</span>
-                <span className="font-mono text-sm font-bold">{n.stats?.cpu_load || "-"}</span>
-              </div>
-              <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
-                <span className="text-xs text-gray-500 mb-1">協程數</span>
-                <span className="font-mono text-sm font-bold">{n.stats?.goroutines || "-"}</span>
-              </div>
+               <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
+                 <span className="text-xs text-gray-500 mb-1">CPU 負載</span>
+                 <span className="font-mono text-sm font-bold">{n.stats?.cpu_load || "-"}</span>
+               </div>
+               <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
+                 <span className="text-xs text-gray-500 mb-1">協程數</span>
+                 <span className="font-mono text-sm font-bold">{n.stats?.goroutines || "-"}</span>
+               </div>
             </div>
           </motion.div>
         );
@@ -236,40 +279,29 @@ function DashboardView({ nodes, allRules }: any) {
   );
 }
 
-// 節點管理視圖 (修復保存按鈕無反應問題)
+// 節點管理 (修復保存按鈕與Token生成)
 function NodesView({ nodes, api, fetchAllData }: any) {
   const [showAdd, setShowAdd] = useState(false);
-  // 生成隨機 Token 的兼容寫法
   const generateToken = () => Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
-  
   const [newNode, setNewNode] = useState({ name: "", ip: "", port: "8080", token: "" });
-  const [isSaving, setIsSaving] = useState(false); // 新增 Loading 狀態
+  const [isSaving, setIsSaving] = useState(false);
 
-  // 打開添加窗口時自動生成 Token
-  useEffect(() => {
-    if (showAdd) setNewNode(prev => ({ ...prev, token: generateToken() }));
-  }, [showAdd]);
+  // 打開時生成 Token
+  useEffect(() => { if(showAdd) setNewNode(prev => ({...prev, token: generateToken()})); }, [showAdd]);
 
   const handleSave = async () => {
-    // 1. 表單驗證
     if (!newNode.name) return alert("請填寫節點名稱");
     if (!newNode.ip) return alert("請填寫公網 IP");
-
-    setIsSaving(true); // 開啟 Loading
+    
+    setIsSaving(true);
     try {
-      // 2. 發送請求
       await api("ADD_NODE", { node: newNode });
-      
-      // 3. 成功處理
       setShowAdd(false);
       setNewNode({ name: "", ip: "", port: "8080", token: "" });
       await fetchAllData();
-      alert("✅ 添加成功！\n請複製下方的【安裝指令】到您的服務器執行。");
-    } catch (e: any) {
-      alert("❌ 保存失敗: " + (e.message || "未知錯誤"));
-    } finally {
-      setIsSaving(false); // 關閉 Loading
-    }
+      alert("✅ 添加成功！請複製下方指令安裝 Agent。");
+    } catch(e: any) { alert("❌ 保存失敗: " + e.message); }
+    finally { setIsSaving(false); }
   };
 
   return (
@@ -282,27 +314,25 @@ function NodesView({ nodes, api, fetchAllData }: any) {
         {showAdd && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[32px] space-y-4 overflow-hidden">
             <h3 className="font-bold text-lg px-2">填寫節點資訊</h3>
-            <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none border border-transparent focus:border-[var(--md-primary)]" placeholder="節點名稱 (如: 香港伺服器)" value={newNode.name} onChange={e=>setNewNode({...newNode,name:e.target.value})} />
-            <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none border border-transparent focus:border-[var(--md-primary)]" placeholder="公網 IP (如: 1.2.3.4)" value={newNode.ip} onChange={e=>setNewNode({...newNode,ip:e.target.value})} />
+            <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none focus:border-[var(--md-primary)] border border-transparent" placeholder="節點名稱" value={newNode.name} onChange={e=>setNewNode({...newNode,name:e.target.value})} />
+            <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none focus:border-[var(--md-primary)] border border-transparent" placeholder="公網 IP" value={newNode.ip} onChange={e=>setNewNode({...newNode,ip:e.target.value})} />
             <div className="relative">
-              <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none text-gray-500" placeholder="Token" value={newNode.token} readOnly />
+              <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none text-gray-500" value={newNode.token} readOnly />
               <button onClick={()=>setNewNode({...newNode, token: generateToken()})} className="absolute right-4 top-4 text-xs font-bold text-[var(--md-primary)]">重置</button>
             </div>
-            
             <motion.button 
               whileTap={{ scale: 0.95 }} 
               onClick={handleSave} 
               disabled={isSaving}
               className={`w-full py-4 rounded-full font-bold transition-all ${isSaving ? 'bg-gray-400 cursor-not-allowed' : 'bg-[var(--md-primary)] text-[var(--md-on-primary)]'}`}
             >
-              {isSaving ? "正在保存並掃描規則..." : "保存 (下一步獲取指令)"}
+              {isSaving ? "正在保存..." : "保存 (下一步獲取指令)"}
             </motion.button>
           </motion.div>
         )}
       </AnimatePresence>
 
       {nodes.map((n: any) => {
-        // 生成安裝指令 (包含 panel url 和 node id)
         const origin = typeof window !== 'undefined' ? window.location.origin : '';
         const installCmd = `curl -sSL ${origin}/api/install | bash -s -- --token ${n.token} --id ${n.id} --panel ${origin}`;
         
@@ -311,13 +341,12 @@ function NodesView({ nodes, api, fetchAllData }: any) {
              <div className="flex justify-between items-center">
                 <h3 className="font-bold text-lg">{n.name}</h3>
                 <div className="flex gap-2">
-                   <motion.button whileTap={{ scale: 0.9 }} onClick={async()=>{await api("SYNC_AGENT",{nodeId:n.id});alert("配置已重新下發");}} className="p-3 bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)] rounded-2xl"><RefreshCw className="w-5 h-5"/></motion.button>
-                   <motion.button whileTap={{ scale: 0.9 }} onClick={()=>{if(confirm("確定刪除此節點？")) api("DELETE_NODE",{nodeId:n.id}).then(fetchAllData)}} className="p-3 bg-red-100 dark:bg-red-900/30 text-red-500 rounded-2xl"><Trash2 className="w-5 h-5"/></motion.button>
+                   <motion.button whileTap={{ scale: 0.9 }} onClick={()=>{if(confirm("確定刪除？")) api("DELETE_NODE",{nodeId:n.id}).then(fetchAllData)}} className="p-3 bg-red-100 dark:bg-red-900/30 text-red-500 rounded-2xl"><Trash2 className="w-5 h-5"/></motion.button>
                 </div>
              </div>
              <div className="bg-white dark:bg-[#111318] p-4 rounded-2xl border border-gray-100 dark:border-white/5">
                 <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-2"><Terminal className="w-4 h-4"/> 安裝指令 (點擊複製)</p>
-                <code onClick={()=>{navigator.clipboard.writeText(installCmd);alert("已複製到剪貼簿！")}} className="block text-xs text-[var(--md-primary)] break-all cursor-pointer hover:opacity-80 transition-opacity leading-relaxed">
+                <code onClick={()=>{navigator.clipboard.writeText(installCmd);alert("已複製")}} className="block text-xs text-[var(--md-primary)] break-all cursor-pointer hover:opacity-80 transition-opacity leading-relaxed">
                   {installCmd}
                 </code>
              </div>
@@ -328,10 +357,9 @@ function NodesView({ nodes, api, fetchAllData }: any) {
   );
 }
 
-// 規則視圖 (UI 優化：Label)
+// 規則管理 (優化輸入框 Label 顯示)
 function RulesView({ nodes, allRules, api, fetchAllData }: any) {
   const [selected, setSelected] = useState<string>(nodes[0]?.id || "");
-  // 使用本地 state 實現樂觀更新
   const [rules, setRules] = useState<any[]>([]);
 
   useEffect(() => {
@@ -339,7 +367,7 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
   }, [selected, allRules]);
 
   const handleOptimisticUpdate = async (newRules: any[]) => {
-    setRules(newRules); // 立即更新 UI
+    setRules(newRules); // 樂觀更新 UI
     await api("SAVE_RULES", { nodeId: selected, rules: newRules });
     fetchAllData(); // 後台同步
   };
@@ -362,12 +390,12 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
           <motion.div layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={idx} className="bg-white dark:bg-[#111318] p-5 rounded-[24px] space-y-4 shadow-sm border border-gray-100 dark:border-white/5">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                <div className="space-y-1">
-                 <label className="text-xs font-bold text-gray-500 ml-1">本地端口 (例如 8080 或 1000-2000)</label>
+                 <label className="text-xs font-bold text-gray-500 ml-1">本地端口 (如 8080 或 1000-2000)</label>
                  <input value={r.listen_port} onChange={e=>{const n=[...rules];n[idx].listen_port=e.target.value;setRules(n)}} onBlur={()=>handleOptimisticUpdate(rules)} className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="Port" />
                </div>
                <div className="space-y-1">
-                 <label className="text-xs font-bold text-gray-500 ml-1">目標 IP 地址</label>
-                 <input value={r.dest_ip} onChange={e=>{const n=[...rules];n[idx].dest_ip=e.target.value;setRules(n)}} onBlur={()=>handleOptimisticUpdate(rules)} className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="1.2.3.4" />
+                 <label className="text-xs font-bold text-gray-500 ml-1">目標 IP</label>
+                 <input value={r.dest_ip} onChange={e=>{const n=[...rules];n[idx].dest_ip=e.target.value;setRules(n)}} onBlur={()=>handleOptimisticUpdate(rules)} className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="IP" />
                </div>
                <div className="space-y-1">
                  <label className="text-xs font-bold text-gray-500 ml-1">目標端口 (對應本地)</label>
@@ -391,7 +419,7 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
   );
 }
 
-// 設定視圖 (2FA Fix)
+// 設定 (2FA, 備份, 密碼)
 function MeView({ setThemeKey, themeKey, setAuth, api, fetchAllData }: any) {
   const [pwd, setPwd] = useState("");
   const[is2FAEnabled, setIs2FAEnabled] = useState(false);
@@ -402,22 +430,18 @@ function MeView({ setThemeKey, themeKey, setAuth, api, fetchAllData }: any) {
     api("CHECK_2FA_STATUS").then((res: any) => setIs2FAEnabled(res.enabled));
   },[]);
 
-  const handleEnable2FA = async () => {
-    const res = await api("GENERATE_2FA");
-    setQrData(res);
-  };
   const handleVerify2FA = async () => {
     try {
       await api("VERIFY_AND_ENABLE_2FA", { code: totpCode, secret: qrData.secret });
-      setIs2FAEnabled(true); setQrData(null); alert("綁定成功！");
-    } catch { alert("驗證碼錯誤"); }
+      setIs2FAEnabled(true); setQrData(null); alert("✅ 2FA 綁定成功！");
+    } catch { alert("❌ 驗證碼錯誤"); }
   };
 
   const handleExport = async () => {
     const data = await api("EXPORT_ALL");
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: "application/json" }));
-    a.download = `aero_backup.json`;
+    a.download = `aero_backup_${new Date().toISOString().slice(0,10)}.json`;
     a.click();
   };
 
@@ -435,19 +459,19 @@ function MeView({ setThemeKey, themeKey, setAuth, api, fetchAllData }: any) {
           <div className="flex justify-between items-center mb-4">
             <div>
               <p className="font-bold flex items-center gap-2"><Smartphone className="w-5 h-5"/> 雙重驗證 (2FA)</p>
-              <p className="text-xs text-gray-500 mt-1">啟用後可用6位數驗證碼秒登錄。</p>
+              <p className="text-xs text-gray-500 mt-1">綁定後可用 Google Authenticator 驗證碼登錄。</p>
             </div>
             {is2FAEnabled ? (
               <motion.button type="button" whileTap={{ scale: 0.95 }} onClick={async()=>{await api("DISABLE_2FA");setIs2FAEnabled(false);alert("已停用 2FA")}} className="px-4 py-2 bg-red-100 text-red-600 rounded-full text-sm font-bold">停用</motion.button>
             ) : (
-              <motion.button type="button" whileTap={{ scale: 0.95 }} onClick={handleEnable2FA} className="px-4 py-2 bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)] rounded-full text-sm font-bold">綁定 2FA</motion.button>
+              <motion.button type="button" whileTap={{ scale: 0.95 }} onClick={async()=>{const res=await api("GENERATE_2FA");setQrData(res)}} className="px-4 py-2 bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)] rounded-full text-sm font-bold">綁定</motion.button>
             )}
           </div>
           
           <AnimatePresence>
             {qrData && !is2FAEnabled && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="flex flex-col items-center bg-white dark:bg-[#111318] p-4 rounded-2xl space-y-4 overflow-hidden">
-                <p className="text-sm font-bold">使用 Google Authenticator 掃描：</p>
+                <p className="text-sm font-bold">使用 Authenticator APP 掃描：</p>
                 <div className="bg-white p-2 rounded-xl"><QRCodeSVG value={qrData.otpauth} size={150} /></div>
                 <div className="flex gap-2 w-full">
                   <input value={totpCode} onChange={e=>setTotpCode(e.target.value)} placeholder="輸入 6 位驗證碼" className="flex-1 bg-gray-50 dark:bg-[#202522] p-3 rounded-xl text-center tracking-widest font-mono" />
