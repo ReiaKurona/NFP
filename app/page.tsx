@@ -1,8 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { Shield, Plus, Save, RefreshCw, Trash2, Home, Network, User, LogOut, Terminal, Palette, PauseCircle } from "lucide-react";
-
+import { Shield, Plus, Save, RefreshCw, Trash2, Home, Network, User, LogOut, Terminal, Palette, PauseCircle, Server } from "lucide-react";
 // MD3 官方配色主題
 const THEMES = {
   emerald: { primary: "#006C4C", onPrimary: "#FFFFFF", primaryContainer: "#89F8C7", onPrimaryContainer: "#002114" },
