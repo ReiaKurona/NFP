@@ -65,9 +65,9 @@ export default function App() {
     setLoading(false);
   };
 
-  // --- 登入組件 ---
+// --- 登入組件 ---
   if (!auth) {
-    return <LoginView setAuth={(token) => { localStorage.setItem("aero_auth", token); setAuth(token); }} />;
+    return <LoginView setAuth={(token: string) => { localStorage.setItem("aero_auth", token); setAuth(token); }} />;
   }
 
   // 計算首頁總計數據
