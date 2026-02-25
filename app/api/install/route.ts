@@ -16,7 +16,10 @@ YELLOW='\\033[0;33m'
 BLUE='\\033[0;34m'
 NC='\\033[0m'
 
-echo -e "\${BLUE}[AeroNode] 開始安裝 V3.0 (GET 穿透版)... \${NC}"
+echo -e "\${BLUE}[AeroNode] 開始安裝 V3.1 (強健網絡版)... \${NC}"
+
+# 清理舊的安裝殘留
+rm -rf /opt/aero-agent/go.tar.gz
 
 # 1. 參數解析
 TOKEN=""
@@ -38,48 +41,68 @@ if [ -z "$TOKEN" ] || [ -z "$NODE_ID" ]; then
     exit 1
 fi
 
-echo -e "目標面板: \${YELLOW}$PANEL_URL\${NC}"
-echo -e "節點 ID: \${YELLOW}$NODE_ID\${NC}"
-
 INSTALL_DIR="/opt/aero-agent"
 SERVICE_NAME="aero-agent"
 
-# 2. 檢測網絡環境並配置 Go 源
-echo -e "\${BLUE}[1/4] 檢測網絡環境...\${NC}"
-export GO111MODULE=on
-if curl -s --max-time 3 https://google.com > /dev/null; then
-    echo -e "國際網絡連通，使用默認源。"
-else
-    echo -e "\${YELLOW}無法連接 Google，切換至國內源 (goproxy.cn)...\${NC}"
-    export GOPROXY=https://goproxy.cn,direct
+# 2. 檢測網絡並安裝 Go
+echo -e "\${BLUE}[1/4] 檢查 Go 環境...\${NC}"
+
+# 判斷是否需要下載 Go
+NEED_INSTALL=true
+if command -v go &> /dev/null; then
+    GO_VERSION=$(go version | awk '{print $3}')
+    echo -e "檢測到現有 Go 版本: $GO_VERSION"
+    NEED_INSTALL=false
 fi
 
-# 3. 安裝 Go (如果不存在)
-if ! command -v go &> /dev/null; then
-    echo -e "\${BLUE}[2/4] 正在下載並安裝 Go...\${NC}"
-    # 根據網絡環境選擇下載源
-    if [ -n "$GOPROXY" ]; then
-        wget -q https://mirrors.ustc.edu.cn/golang/go1.21.5.linux-amd64.tar.gz -O go.tar.gz
-    else
-        wget -q https://go.dev/dl/go1.21.5.linux-amd64.tar.gz -O go.tar.gz
-    fi
+if [ "$NEED_INSTALL" = true ]; then
+    echo -e "\${YELLOW}未檢測到 Go，準備下載...\${NC}"
     
-    if [ ! -f "go.tar.gz" ]; then
-        echo -e "\${RED}Go 下載失敗！請檢查網絡。\${NC}"
+    # 智能選擇下載源
+    DOWNLOAD_URL="https://go.dev/dl/go1.21.5.linux-amd64.tar.gz"
+    if ! curl -s --max-time 3 https://google.com > /dev/null; then
+        echo -e "無法連接國際網絡，切換至 \${GREEN}阿里雲鏡像 (Aliyun)\${NC}..."
+        DOWNLOAD_URL="https://mirrors.aliyun.com/golang/go1.21.5.linux-amd64.tar.gz"
+        export GOPROXY=https://goproxy.cn,direct
+    fi
+
+    # 下載並檢查狀態
+    echo -e "正在下載: $DOWNLOAD_URL"
+    wget --no-check-certificate -q $DOWNLOAD_URL -O go.tar.gz
+    
+    # 檢查文件是否下載成功 (大於 1MB)
+    FILE_SIZE=$(du -k go.tar.gz | cut -f1)
+    if [ ! -f "go.tar.gz" ] || [ "$FILE_SIZE" -lt 1000 ]; then
+        echo -e "\${RED}錯誤: Go 安裝包下載失敗或文件損壞！\${NC}"
+        echo -e "請嘗試手動安裝 Go 後再運行此腳本。"
+        rm -f go.tar.gz
         exit 1
     fi
 
-    rm -rf /usr/local/go && tar -C /usr/local -xzf go.tar.gz
+    echo -e "下載成功，正在解壓..."
+    rm -rf /usr/local/go
+    if ! tar -C /usr/local -xzf go.tar.gz; then
+         echo -e "\${RED}錯誤: 解壓失敗！文件可能已損壞。\${NC}"
+         exit 1
+    fi
+    
+    # 立即更新環境變量
     export PATH=$PATH:/usr/local/go/bin
     echo "export PATH=\\$PATH:/usr/local/go/bin" >> /etc/profile
-    rm go.tar.gz
+    rm -f go.tar.gz
+fi
+
+# 再次驗證 Go 是否可用
+if ! /usr/local/go/bin/go version &> /dev/null && ! command -v go &> /dev/null; then
+    echo -e "\${RED}錯誤: Go 安裝後無法執行。請檢查系統架構 (必須是 x86_64/amd64)。\${NC}"
+    exit 1
 fi
 
 mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
 
-# 4. 寫入配置與代碼
-echo -e "\${BLUE}[3/4] 編譯 Agent 核心...\${NC}"
+# 3. 寫入配置與代碼
+echo -e "\${BLUE}[2/4] 生成 Agent 配置...\${NC}"
 
 cat > config.json <<EOF
 { "token": "$TOKEN", "node_id": "$NODE_ID", "panel_url": "$PANEL_URL" }
@@ -129,7 +152,9 @@ var config Config
 
 func getStats() map[string]interface{} {
     out, _ := exec.Command("cat", "/proc/loadavg").Output()
-    load := strings.Fields(string(out))[0]
+    parts := strings.Fields(string(out))
+    load := "0.0"
+    if len(parts) > 0 { load = parts[0] }
     return map[string]interface{}{ "cpu_load": load, "goroutines": runtime.NumGoroutine() }
 }
 
@@ -137,48 +162,31 @@ func startLoop() {
     client := &http.Client{Timeout: 15 * time.Second}
     
     for {
-        // 1. 準備數據
         payload := map[string]interface{}{
             "nodeId": config.NodeId,
             "token":  config.Token,
             "stats":  getStats(),
         }
         jsonBytes, _ := json.Marshal(payload)
-        
-        // 2. 改用 GET 請求 (Base64 URL 編碼)
         b64Data := base64.StdEncoding.EncodeToString(jsonBytes)
-        // URL Encode 確保安全傳輸
         safeData := url.QueryEscape(b64Data)
-        
         targetUrl := fmt.Sprintf("%s/api?action=HEARTBEAT&data=%s", config.PanelUrl, safeData)
         
         resp, err := client.Get(targetUrl)
-        
         var interval = 60
-        
         if err == nil && resp.StatusCode == 200 {
             var hbResp HeartbeatResp
             json.NewDecoder(resp.Body).Decode(&hbResp)
             resp.Body.Close()
-            
             if hbResp.Interval > 0 { interval = hbResp.Interval }
             if hbResp.HasCmd { fetchAndApplyRules(client) }
-        } else {
-            fmt.Printf("Heartbeat Error: %v\n", err)
         }
-
         time.Sleep(time.Duration(interval) * time.Second)
     }
 }
 
 func fetchAndApplyRules(client *http.Client) {
-    // 拉取配置仍使用 POST (安全性)
-    payload, _ := json.Marshal(map[string]interface{}{
-        "action": "FETCH_CONFIG",
-        "nodeId": config.NodeId,
-        "token":  config.Token,
-    })
-    
+    payload, _ := json.Marshal(map[string]interface{}{ "action": "FETCH_CONFIG", "nodeId": config.NodeId, "token": config.Token })
     resp, err := client.Post(config.PanelUrl+"/api", "application/json", bytes.NewBuffer(payload))
     if err != nil { return }
     defer resp.Body.Close()
@@ -191,13 +199,10 @@ func fetchAndApplyRules(client *http.Client) {
     ciphertext, _ := hex.DecodeString(ep.Payload)
     iv, _ := hex.DecodeString(ep.IV)
     if len(ciphertext) < 16 { return }
-    authTag := ciphertext[len(ciphertext)-16:]
-    realCipher := ciphertext[:len(ciphertext)-16]
-
+    
     block, _ := aes.NewCipher(key[:])
     aesgcm, _ := cipher.NewGCM(block)
-    plaintext, err := aesgcm.Open(nil, iv, append(realCipher, authTag...), nil)
-    
+    plaintext, err := aesgcm.Open(nil, iv, ciphertext, nil)
     if err != nil { return }
     
     var data struct { Rules []Rule }
@@ -219,25 +224,32 @@ func applyRules(rules []Rule) {
 func main() {
 	cfgData, _ := ioutil.ReadFile("config.json")
 	json.Unmarshal(cfgData, &config)
-
 	exec.Command("nft", "add", "table", "ip", "nat").Run()
 	exec.Command("nft", "add", "chain", "ip", "nat", "PREROUTING", "{ type nat hook prerouting priority -100; }").Run()
 	exec.Command("nft", "add", "chain", "ip", "nat", "POSTROUTING", "{ type nat hook postrouting priority 100; }").Run()
-
-    fmt.Println("AeroNode Agent Started (GET Mode)")
     startLoop()
 }
 GOEOF
 
-# 初始化並編譯
-go mod init agent > /dev/null 2>&1
-if ! go build -ldflags="-s -w" -o aero-agent main.go; then
-    echo -e "\${RED}編譯失敗！請檢查 Go 環境或錯誤日誌。\${NC}"
+# 4. 編譯與安裝
+echo -e "\${BLUE}[3/4] 編譯 Agent 核心...\${NC}"
+
+# 強制使用絕對路徑調用 Go，確保能夠找到命令
+GO_BIN="/usr/local/go/bin/go"
+if ! [ -x "$GO_BIN" ]; then
+    GO_BIN=$(command -v go)
+fi
+
+$GO_BIN mod init agent > /dev/null 2>&1
+if ! $GO_BIN build -ldflags="-s -w" -o aero-agent main.go; then
+    echo -e "\${RED}編譯失敗！可能原因：\${NC}"
+    echo -e "1. VPS 內存不足 (建議至少 512MB)"
+    echo -e "2. Go 國內源配置失敗"
+    echo -e "3. 系統架構不是 amd64"
     exit 1
 fi
 
-# 5. 創建服務與啟動檢查
-echo -e "\${BLUE}[4/4] 註冊系統服務...\${NC}"
+echo -e "\${BLUE}[4/4] 啟動服務...\${NC}"
 
 cat > /etc/systemd/system/$SERVICE_NAME.service <<EOF
 [Unit]
@@ -255,18 +267,12 @@ systemctl daemon-reload
 systemctl enable $SERVICE_NAME
 systemctl restart $SERVICE_NAME
 
-# 6. 最終狀態確認 (增加詳細診斷)
 sleep 2
 if systemctl is-active --quiet $SERVICE_NAME; then
     echo -e "\n\${GREEN}✅ 安裝成功！Agent 正在運行。\${NC}"
-    echo -e "請回到面板查看節點狀態 (可能需要等待 10-60 秒)。"
 else
-    echo -e "\n\${RED}❌ Agent 啟動失敗！\${NC}"
-    echo -e "以下是錯誤日誌 (Journalctl):"
-    echo "-----------------------------------"
+    echo -e "\n\${RED}❌ 服務啟動失敗，請查看日誌：\${NC}"
     journalctl -u $SERVICE_NAME -n 10 --no-pager
-    echo "-----------------------------------"
-    echo -e "請截圖以上日誌進行反饋。"
 fi
 `;
   return new NextResponse(script, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
