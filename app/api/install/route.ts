@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const host = req.headers.get("host");
@@ -7,15 +9,16 @@ export async function GET(req: Request) {
   const defaultPanel = host ? `${protocol}://${host}` : "";
   const panelUrl = searchParams.get("panel") || defaultPanel;
 
+  // 注意：Python 代碼中的換行符 \n 必須寫成 \\n，否則在傳輸時會變成真實換行導致語法錯誤
   const script = `#!/bin/bash
-# AeroNode V6.0 - Root 終極穩定版
+# AeroNode V6.1 - Fix Syntax Error Version
 
 RED='\\033[0;31m'
 GREEN='\\033[0;32m'
 BLUE='\\033[0;34m'
 NC='\\033[0m'
 
-echo -e "\${BLUE}[AeroNode] 安裝 V6.0 (Root 權限版)... \${NC}"
+echo -e "\${BLUE}[AeroNode] 安裝 V6.1 (修復版)... \${NC}"
 
 TOKEN=""
 NODE_ID=""
@@ -53,7 +56,8 @@ install_packages() {
     fi
 }
 
-if ! command -v pip3 &> /dev/null || ! command -v nft &> /dev/null; then
+# 即使有 python3 也要確保有 pip 和 venv
+if ! command -v pip3 &> /dev/null || ! python3 -m venv --help &> /dev/null; then
     install_packages
 fi
 
@@ -77,17 +81,19 @@ cat > config.json <<EOF
 { "token": "$TOKEN", "node_id": "$NODE_ID", "panel_url": "$PANEL_URL", "nft_bin": "$NFT_BIN" }
 EOF
 
+# 注意：這裡所有的 \\n 都是為了防止 JS 模板字符串將其轉為真實換行
 cat > agent.py << 'PYEOF'
 import sys, json, time, base64, urllib.request, urllib.parse, subprocess, threading, os
 from datetime import datetime
 
-# 日誌設置
 LOG_FILE = "/var/log/aero-agent.log"
 def log(msg):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(LOG_FILE, "a") as f:
-        f.write(f"[{ts}] {msg}\n")
-    print(msg) # 同時輸出到 stdout 供 systemd 捕獲
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(f"[{ts}] {msg}\\n")
+    except: pass
+    print(msg)
 
 try:
     from Crypto.Cipher import AES
@@ -96,7 +102,6 @@ except ImportError:
     log("CRITICAL: PyCryptodome import failed")
     sys.exit(1)
 
-# 加載配置
 try:
     with open("config.json", "r") as f: CONFIG = json.load(f)
 except Exception as e:
@@ -120,15 +125,13 @@ class Monitor:
                     rx += int(data[0])
                     tx += int(data[8])
         except Exception as e:
-            log(f"Net read error: {e}")
+            pass
         return (rx, tx)
 
     def get_stats(self):
         try:
-            # CPU
             with open("/proc/loadavg", "r") as f: cpu_load = f.read().split()[0]
             
-            # RAM
             mem_total, mem_avail = 0, 0
             with open("/proc/meminfo", "r") as f:
                 for line in f:
@@ -136,7 +139,6 @@ class Monitor:
                     if "MemAvailable" in line: mem_avail = int(line.split()[1])
             mem_usage = int(((mem_total - mem_avail) / mem_total * 100)) if mem_total > 0 else 0
 
-            # NET
             curr_net = self.read_net()
             curr_time = time.time()
             diff = curr_time - self.last_time
@@ -171,23 +173,22 @@ class SystemUtils:
     @staticmethod
     def apply_rules(rules):
         log(f"Applying {len(rules)} rules...")
-        nft_content = "flush ruleset\n"
-        nft_content += "table ip nat {\n"
-        nft_content += "  chain PREROUTING { type nat hook prerouting priority -100; }\n"
-        nft_content += "  chain POSTROUTING { type nat hook postrouting priority 100; }\n"
+        nft_content = "flush ruleset\\n"
+        nft_content += "table ip nat {\\n"
+        nft_content += "  chain PREROUTING { type nat hook prerouting priority -100; }\\n"
+        nft_content += "  chain POSTROUTING { type nat hook postrouting priority 100; }\\n"
         
         for r in rules:
             p = r.get("protocol", "tcp")
             sport = r["listen_port"]
             dip = r["dest_ip"]
             dport = r["dest_port"]
-            nft_content += f"  add rule nat PREROUTING {p} dport {sport} counter dnat to {dip}:{dport}\n"
-            nft_content += f"  add rule nat POSTROUTING ip daddr {dip} {p} dport {dport} counter masquerade\n"
-        nft_content += "}\n"
+            nft_content += f"  add rule nat PREROUTING {p} dport {sport} counter dnat to {dip}:{dport}\\n"
+            nft_content += f"  add rule nat POSTROUTING ip daddr {dip} {p} dport {dport} counter masquerade\\n"
+        nft_content += "}\\n"
         
         try:
             with open("rules.nft", "w") as f: f.write(nft_content)
-            # 使用配置中的 nft 路徑
             cmd = [CONFIG.get("nft_bin", "nft"), "-f", "rules.nft"]
             res = subprocess.run(cmd, capture_output=True, text=True)
             if res.returncode != 0:
@@ -232,10 +233,9 @@ def loop():
                 "stats": monitor.get_stats()
             }
             b64 = base64.b64encode(json.dumps(payload).encode()).decode()
-            # 確保 URL 編碼正確
             url = f"{CONFIG['panel_url']}/api?action=HEARTBEAT&data={urllib.parse.quote(b64)}"
             
-            req = urllib.request.Request(url, headers={'User-Agent': 'AeroAgent/6.0'})
+            req = urllib.request.Request(url, headers={'User-Agent': 'AeroAgent/6.1'})
             with urllib.request.urlopen(req, timeout=15) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode())
@@ -251,12 +251,9 @@ def loop():
         time.sleep(interval)
 
 if __name__ == "__main__":
-    # 開啟 IP 轉發
     try:
         with open("/proc/sys/net/ipv4/ip_forward", "w") as f: f.write("1")
-    except:
-        log("Warning: Could not enable ip_forward")
-        
+    except: pass
     loop()
 PYEOF
 
@@ -270,7 +267,6 @@ cat > /etc/systemd/system/$SERVICE_NAME.service <<EOF
 Description=AeroNode Root Agent
 After=network.target
 [Service]
-# 關鍵：強制以 Root 運行
 User=root
 Group=root
 ExecStart=$VENV_PYTHON -u $INSTALL_DIR/agent.py
@@ -289,8 +285,6 @@ systemctl restart $SERVICE_NAME
 sleep 2
 if systemctl is-active --quiet $SERVICE_NAME; then
     echo -e "\n\${GREEN}✅ 安裝成功！Root Agent 正在運行。\${NC}"
-    echo -e "日誌文件位置: $LOG_FILE"
-    echo -e "如果面板顯示離線，請執行: \${YELLOW}tail -f $LOG_FILE\${NC} 查看原因。"
 else
     echo -e "\n\${RED}❌ 啟動失敗！請查看錯誤日誌：\${NC}"
     journalctl -u $SERVICE_NAME -n 10 --no-pager
