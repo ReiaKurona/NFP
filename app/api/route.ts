@@ -1,137 +1,221 @@
-import { kv } from "@vercel/kv";
 import { NextResponse } from "next/server";
-import crypto from "crypto";
-// 使用 require 繞過 Turbopack 的嚴格檢查
-const { authenticator } = require("otplib");
 
-function encryptPayload(data: any, token: string) {
-  const key = crypto.createHash("sha256").update(token).digest();
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-  let encrypted = cipher.update(JSON.stringify(data), "utf8", "hex");
-  encrypted += cipher.final("hex");
-  return { payload: encrypted + cipher.getAuthTag().toString("hex"), iv: iv.toString("hex") };
+export async function GET(req: Request) {
+  // 獲取面板的根域名，用於 Agent 回報狀態
+  const { searchParams } = new URL(req.url);
+  const panelUrl = searchParams.get("panel") || "";
+
+  const script = `#!/bin/bash
+echo -e "\\033[34m[AeroNode] 開始安裝智能 Agent (主動匯報模式)...\\033[0m"
+
+# 參數解析
+TOKEN=""
+PORT="8080"
+NODE_ID=""
+PANEL_URL="${panelUrl}"
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --token) TOKEN="$2"; shift ;;
+        --port) PORT="$2"; shift ;;
+        --id) NODE_ID="$2"; shift ;;
+        --panel) PANEL_URL="$2"; shift ;;
+        *) echo "未知參數: $1"; exit 1 ;;
+    esac
+    shift
+done
+
+if [ -z "$TOKEN" ] || [ -z "$NODE_ID" ]; then
+    echo -e "\\033[31m錯誤: 缺少 Token 或 Node ID。請從面板重新複製安裝指令。\\033[0m"
+    exit 1
+fi
+
+INSTALL_DIR="/opt/aero-agent"
+SERVICE_NAME="aero-agent"
+
+# 安裝 Go
+if ! command -v go &> /dev/null; then
+    wget -q https://go.dev/dl/go1.21.5.linux-amd64.tar.gz
+    rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz
+    export PATH=$PATH:/usr/local/go/bin
+    echo "export PATH=\\$PATH:/usr/local/go/bin" >> /etc/profile
+    rm go1.21.5.linux-amd64.tar.gz
+fi
+
+mkdir -p $INSTALL_DIR
+cd $INSTALL_DIR
+
+# 寫入配置
+cat > config.json <<EOF
+{ 
+  "token": "$TOKEN", 
+  "port": $PORT,
+  "node_id": "$NODE_ID",
+  "panel_url": "$PANEL_URL"
+}
+EOF
+
+# 寫入 Go 源碼 (包含心跳機制)
+cat > main.go << 'GOEOF'
+package main
+
+import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"net/http"
+	"os/exec"
+	"regexp"
+	"runtime"
+	"strings"
+	"time"
+)
+
+type Config struct {
+	Token    string \`json:"token"\`
+	Port     int    \`json:"port"\`
+	NodeId   string \`json:"node_id"\`
+	PanelUrl string \`json:"panel_url"\`
 }
 
-function hashPassword(password: string) {
-  return crypto.createHash("sha256").update(password + "aero_salt").digest("hex");
+type Rule struct {
+	ListenPort string \`json:"listen_port"\`
+	DestIP     string \`json:"dest_ip"\`
+	DestPort   string \`json:"dest_port"\`
+	Protocol   string \`json:"protocol"\`
 }
 
-export async function POST(req: Request) {
-  try {
-    const { action, auth, ...data } = await req.json();
+var config Config
+
+// 獲取系統狀態
+func getStats() map[string]interface{} {
+    out, _ := exec.Command("cat", "/proc/loadavg").Output()
+    load := strings.Fields(string(out))[0]
     
-    // 初始化預設密碼
-    let currentHash = await kv.get<string>("admin_password");
-    if (!currentHash) {
-      currentHash = hashPassword("admin123");
-      await kv.set("admin_password", currentHash);
+    // 獲取簡易網速 (需要更複雜邏輯，這裡暫用偽代碼或簡單讀取)
+    // 為保持腳本輕量，這裡僅返回負載，實際流量可讀取 /proc/net/dev
+    return map[string]interface{}{
+        "cpu_load": load,
+        "goroutines": runtime.NumGoroutine(),
+        "tx_speed": "0 KB/s", // 需完善
+        "rx_speed": "0 KB/s",
     }
-    
-    const isFirstLogin = currentHash === hashPassword("admin123");
-    const totpSecret = await kv.get<string>("totp_secret");
+}
 
-    // 登錄邏輯：支援密碼 或 2FA 驗證碼
-    if (action === "LOGIN") {
-      const isPwdCorrect = hashPassword(data.password) === currentHash;
-      const isTotpCorrect = totpSecret ? authenticator.check(data.password, totpSecret) : false;
-      
-      if (isPwdCorrect || isTotpCorrect) {
-        return NextResponse.json({ success: true, token: currentHash, isFirstLogin });
-      }
-      return NextResponse.json({ error: "密碼或 2FA 驗證碼錯誤" }, { status: 401 });
+// 主動向面板匯報心跳
+func startHeartbeat() {
+    for {
+        stats := getStats()
+        payload := map[string]interface{}{
+            "nodeId": config.NodeId,
+            "token":  config.Token,
+            "stats":  stats,
+        }
+        jsonBody, _ := json.Marshal(payload)
+        
+        // 發送 HTTPS POST 到 Vercel
+        if config.PanelUrl != "" {
+            http.Post(config.PanelUrl + "/api/report", "application/json", bytes.NewBuffer(jsonBody))
+        }
+        
+        time.Sleep(10 * time.Second) // 每10秒匯報一次
     }
+}
 
-    // --- 以下接口需要授權 ---
-    if (auth !== currentHash) return NextResponse.json({ error: "未授權" }, { status: 401 });
+// 掃描現有規則
+func parseExistingRules() []Rule {
+	var rules[]Rule
+	out, err := exec.Command("nft", "list", "chain", "ip", "nat", "PREROUTING").Output()
+	if err != nil { return rules }
+	re := regexp.MustCompile(\`(tcp|udp)\\s+dport\\s+([\\d-]+).*?dnat\\s+to\\s+([\\d\\.]+):([\\d-]+)\`)
+	lines := strings.Split(string(out), "\\n")
+	for _, line := range lines {
+		matches := re.FindStringSubmatch(line)
+		if len(matches) == 5 {
+			rules = append(rules, Rule{Protocol: matches[1], ListenPort: matches[2], DestIP: matches[3], DestPort: matches[4]})
+		}
+	}
+	return rules
+}
 
-    if (action === "CHANGE_PASSWORD") {
-      const newHash = hashPassword(data.newPassword);
-      await kv.set("admin_password", newHash);
-      return NextResponse.json({ success: true, token: newHash });
-    }
+func main() {
+	cfgData, _ := ioutil.ReadFile("config.json")
+	json.Unmarshal(cfgData, &config)
 
-    // 2FA 設置接口
-    if (action === "GENERATE_2FA") {
-      const secret = authenticator.generateSecret();
-      const otpauth = authenticator.keyuri("Admin", "AeroNode", secret);
-      return NextResponse.json({ secret, otpauth });
-    }
-    if (action === "VERIFY_AND_ENABLE_2FA") {
-      if (authenticator.check(data.code, data.secret)) {
-        await kv.set("totp_secret", data.secret);
-        return NextResponse.json({ success: true });
-      }
-      return NextResponse.json({ error: "驗證碼錯誤" }, { status: 400 });
-    }
-    if (action === "DISABLE_2FA") {
-      await kv.del("totp_secret");
-      return NextResponse.json({ success: true });
-    }
-    if (action === "CHECK_2FA_STATUS") {
-      return NextResponse.json({ enabled: !!totpSecret });
-    }
+    // 初始化 nftables
+	exec.Command("nft", "add", "table", "ip", "nat").Run()
+	exec.Command("nft", "add", "chain", "ip", "nat", "PREROUTING", "{ type nat hook prerouting priority -100; }").Run()
+	exec.Command("nft", "add", "chain", "ip", "nat", "POSTROUTING", "{ type nat hook postrouting priority 100; }").Run()
 
-    // 備份與還原
-    if (action === "EXPORT_ALL") {
-      const nodes = await kv.hgetall("nodes") || {};
-      const rules: any = {};
-      for (const id of Object.keys(nodes)) rules[id] = await kv.lrange(`rules:${id}`, 0, -1) ||[];
-      return NextResponse.json({ nodes, rules });
-    }
-    if (action === "IMPORT_ALL") {
-      const { nodes, rules } = data.backupData;
-      await kv.del("nodes");
-      if (Object.keys(nodes).length > 0) await kv.hset("nodes", nodes);
-      for (const nodeId of Object.keys(rules)) {
-        await kv.del(`rules:${nodeId}`);
-        if (rules[nodeId].length > 0) await kv.rpush(`rules:${nodeId}`, ...rules[nodeId]);
-      }
-      return NextResponse.json({ success: true });
-    }
+    // 啟動心跳協程
+    go startHeartbeat()
 
-    // 節點與規則管理 (不變)
-    if (action === "ADD_NODE") {
-      const id = Date.now().toString();
-      const node = { ...data.node, id, lastSeen: 0 };
-      await kv.hset("nodes", {[id]: node });
-      return NextResponse.json({ success: true });
-    }
-    if (action === "DELETE_NODE") {
-      const nodes: any = await kv.hgetall("nodes");
-      if (nodes && nodes[data.nodeId]) {
-        delete nodes[data.nodeId];
-        await kv.del("nodes");
-        if (Object.keys(nodes).length > 0) await kv.hset("nodes", nodes);
-      }
-      await kv.del(`rules:${data.nodeId}`);
-      return NextResponse.json({ success: true });
-    }
-    if (action === "GET_NODES") return NextResponse.json(await kv.hgetall("nodes") || {});
-    if (action === "SAVE_RULES") {
-      await kv.del(`rules:${data.nodeId}`);
-      if (data.rules.length > 0) await kv.rpush(`rules:${data.nodeId}`, ...data.rules);
-      return NextResponse.json({ success: true });
-    }
-    if (action === "GET_RULES") return NextResponse.json(await kv.lrange(`rules:${data.nodeId}`, 0, -1) ||[]);
-    
-    // Agent 通信
-    if (action === "SYNC_AGENT" || action === "POLL_STATUS") {
-       const node: any = await kv.hget("nodes", data.nodeId);
-       if (!node) return NextResponse.json({ error: "Node missing" }, { status: 404 });
-       const rules = action === "SYNC_AGENT" ? (await kv.lrange(`rules:${data.nodeId}`, 0, -1) || []) :[];
-       const cmd = action === "SYNC_AGENT" ? "APPLY" : "STATUS";
-       
-       const payload = encryptPayload({ action: cmd, rules }, node.token);
-       const res = await fetch(`http://${node.ip}:${node.port}/sync`, {
-         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: AbortSignal.timeout(3000),
-       });
-       if (!res.ok) throw new Error("Offline");
-       const { stats } = await res.json();
-       await kv.hset("nodes", {[data.nodeId]: { ...node, lastSeen: Date.now(), stats } });
-       return NextResponse.json({ success: true, stats });
-    }
+    // 啟動監聽服務 (接收規則下發)
+	http.HandleFunc("/sync", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" { http.Error(w, "Method not allowed", 405); return }
+		body, _ := ioutil.ReadAll(r.Body)
+		
+		var ep struct { Payload, IV string }
+		json.Unmarshal(body, &ep)
 
-    return NextResponse.json({ error: "Unknown" });
-  } catch (e: any) { return NextResponse.json({ error: e.message }, { status: 500 }); }
+		key := sha256.Sum256([]byte(config.Token))
+		ciphertext, _ := hex.DecodeString(ep.Payload)
+		iv, _ := hex.DecodeString(ep.IV)
+
+		block, _ := aes.NewCipher(key[:])
+		aesgcm, _ := cipher.NewGCM(block)
+		decryptedData, err := aesgcm.Open(nil, iv, ciphertext, nil)
+		if err != nil { http.Error(w, "Auth Failed", 403); return }
+
+		var cmd struct { Action string; Rules []Rule }
+		json.Unmarshal(decryptedData, &cmd)
+
+		response := map[string]interface{}{}
+
+		if cmd.Action == "PULL_EXISTING" {
+			response["existing_rules"] = parseExistingRules()
+		} else if cmd.Action == "APPLY" {
+			exec.Command("nft", "flush", "chain", "ip", "nat", "PREROUTING").Run()
+			exec.Command("nft", "flush", "chain", "ip", "nat", "POSTROUTING").Run()
+			for _, rule := range cmd.Rules {
+				proto := rule.Protocol
+				if proto == "" { proto = "tcp" }
+				exec.Command("sh", "-c", fmt.Sprintf("nft add rule ip nat PREROUTING %s dport %s counter dnat to %s:%s", proto, rule.ListenPort, rule.DestIP, rule.DestPort)).Run()
+				exec.Command("sh", "-c", fmt.Sprintf("nft add rule ip nat POSTROUTING ip daddr %s %s dport %s counter masquerade", rule.DestIP, proto, rule.DestPort)).Run()
+			}
+		}
+        
+        // 立即返回一次狀態
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+	})
+
+	addr := fmt.Sprintf(":%d", config.Port)
+	fmt.Printf("Agent running on %s\\n", addr)
+	http.ListenAndServe(addr, nil)
+}
+GOEOF
+
+go mod init agent > /dev/null 2>&1
+go build -ldflags="-s -w" -o aero-agent main.go
+
+cat > /etc/systemd/system/$SERVICE_NAME.service <<EOF
+[Unit]
+Description=AeroNode Agent
+[Service]
+ExecStart=$INSTALL_DIR/aero-agent
+Restart=always
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload && systemctl enable $SERVICE_NAME && systemctl restart $SERVICE_NAME
+echo -e "\\n\\033[32m[安裝完成]\\033[0m Agent已啟動！請回到面板查看狀態。"
+`;
+  return new NextResponse(script, { headers: { "Content-Type": "text/plain" } });
 }
