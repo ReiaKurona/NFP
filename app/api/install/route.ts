@@ -8,9 +8,17 @@ export async function GET(req: Request) {
   const panelUrl = searchParams.get("panel") || defaultPanel;
 
   const script = `#!/bin/bash
-echo -e "\\033[34m[AeroNode] 安裝 V2.0 智能輪詢 Agent...\\033[0m"
 
-# 參數解析
+# 定義顏色
+RED='\\033[0;31m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[0;33m'
+BLUE='\\033[0;34m'
+NC='\\033[0m'
+
+echo -e "\${BLUE}[AeroNode] 開始安裝 V3.0 (GET 穿透版)... \${NC}"
+
+# 1. 參數解析
 TOKEN=""
 NODE_ID=""
 PANEL_URL="${panelUrl}"
@@ -26,24 +34,52 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 if [ -z "$TOKEN" ] || [ -z "$NODE_ID" ]; then
-    echo -e "\\033[31m錯誤: 參數缺失。請從面板複製完整指令。\\033[0m"
+    echo -e "\${RED}錯誤: 參數缺失。請從面板複製完整指令。\${NC}"
     exit 1
 fi
+
+echo -e "目標面板: \${YELLOW}$PANEL_URL\${NC}"
+echo -e "節點 ID: \${YELLOW}$NODE_ID\${NC}"
 
 INSTALL_DIR="/opt/aero-agent"
 SERVICE_NAME="aero-agent"
 
+# 2. 檢測網絡環境並配置 Go 源
+echo -e "\${BLUE}[1/4] 檢測網絡環境...\${NC}"
+export GO111MODULE=on
+if curl -s --max-time 3 https://google.com > /dev/null; then
+    echo -e "國際網絡連通，使用默認源。"
+else
+    echo -e "\${YELLOW}無法連接 Google，切換至國內源 (goproxy.cn)...\${NC}"
+    export GOPROXY=https://goproxy.cn,direct
+fi
+
+# 3. 安裝 Go (如果不存在)
 if ! command -v go &> /dev/null; then
-    echo "安裝 Go 環境..."
-    wget -q https://go.dev/dl/go1.21.5.linux-amd64.tar.gz
-    rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz
+    echo -e "\${BLUE}[2/4] 正在下載並安裝 Go...\${NC}"
+    # 根據網絡環境選擇下載源
+    if [ -n "$GOPROXY" ]; then
+        wget -q https://mirrors.ustc.edu.cn/golang/go1.21.5.linux-amd64.tar.gz -O go.tar.gz
+    else
+        wget -q https://go.dev/dl/go1.21.5.linux-amd64.tar.gz -O go.tar.gz
+    fi
+    
+    if [ ! -f "go.tar.gz" ]; then
+        echo -e "\${RED}Go 下載失敗！請檢查網絡。\${NC}"
+        exit 1
+    fi
+
+    rm -rf /usr/local/go && tar -C /usr/local -xzf go.tar.gz
     export PATH=$PATH:/usr/local/go/bin
     echo "export PATH=\\$PATH:/usr/local/go/bin" >> /etc/profile
-    rm go1.21.5.linux-amd64.tar.gz
+    rm go.tar.gz
 fi
 
 mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
+
+# 4. 寫入配置與代碼
+echo -e "\${BLUE}[3/4] 編譯 Agent 核心...\${NC}"
 
 cat > config.json <<EOF
 { "token": "$TOKEN", "node_id": "$NODE_ID", "panel_url": "$PANEL_URL" }
@@ -57,11 +93,13 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -95,78 +133,75 @@ func getStats() map[string]interface{} {
     return map[string]interface{}{ "cpu_load": load, "goroutines": runtime.NumGoroutine() }
 }
 
-// 核心循環：發送心跳 -> 獲取指令 -> 執行 -> 休眠
 func startLoop() {
-    client := &http.Client{Timeout: 10 * time.Second}
+    client := &http.Client{Timeout: 15 * time.Second}
     
     for {
-        // 1. 準備心跳數據
-        payload, _ := json.Marshal(map[string]interface{}{
-            "action": "HEARTBEAT",
+        // 1. 準備數據
+        payload := map[string]interface{}{
             "nodeId": config.NodeId,
             "token":  config.Token,
             "stats":  getStats(),
-        })
-
-        // 2. 發送心跳
-        resp, err := client.Post(config.PanelUrl + "/api", "application/json", bytes.NewBuffer(payload))
+        }
+        jsonBytes, _ := json.Marshal(payload)
         
-        var interval = 60 // 默認休眠 60 秒 (失敗時)
+        // 2. 改用 GET 請求 (Base64 URL 編碼)
+        b64Data := base64.StdEncoding.EncodeToString(jsonBytes)
+        // URL Encode 確保安全傳輸
+        safeData := url.QueryEscape(b64Data)
+        
+        targetUrl := fmt.Sprintf("%s/api?action=HEARTBEAT&data=%s", config.PanelUrl, safeData)
+        
+        resp, err := client.Get(targetUrl)
+        
+        var interval = 60
         
         if err == nil && resp.StatusCode == 200 {
             var hbResp HeartbeatResp
             json.NewDecoder(resp.Body).Decode(&hbResp)
             resp.Body.Close()
             
-            // 更新休眠時間 (面板決定)
             if hbResp.Interval > 0 { interval = hbResp.Interval }
-
-            // 3. 如果面板有新指令，立即拉取配置
-            if hbResp.HasCmd {
-                fetchAndApplyRules(client)
-            }
+            if hbResp.HasCmd { fetchAndApplyRules(client) }
         } else {
-            fmt.Println("Heartbeat failed, retrying...")
+            fmt.Printf("Heartbeat Error: %v\n", err)
         }
 
-        // 4. 動態休眠
         time.Sleep(time.Duration(interval) * time.Second)
     }
 }
 
 func fetchAndApplyRules(client *http.Client) {
+    // 拉取配置仍使用 POST (安全性)
     payload, _ := json.Marshal(map[string]interface{}{
         "action": "FETCH_CONFIG",
         "nodeId": config.NodeId,
         "token":  config.Token,
     })
     
-    resp, err := client.Post(config.PanelUrl + "/api", "application/json", bytes.NewBuffer(payload))
+    resp, err := client.Post(config.PanelUrl+"/api", "application/json", bytes.NewBuffer(payload))
     if err != nil { return }
     defer resp.Body.Close()
     
     body, _ := ioutil.ReadAll(resp.Body)
-    
-    // 解密
     var ep struct { Payload string; IV string }
     json.Unmarshal(body, &ep)
     
     key := sha256.Sum256([]byte(config.Token))
     ciphertext, _ := hex.DecodeString(ep.Payload)
-    iv, _ := hex.DecodeString(ep.IV) // 12 bytes
-    authTag := ciphertext[len(ciphertext)-16:] // Last 16 bytes are tag
+    iv, _ := hex.DecodeString(ep.IV)
+    if len(ciphertext) < 16 { return }
+    authTag := ciphertext[len(ciphertext)-16:]
     realCipher := ciphertext[:len(ciphertext)-16]
 
     block, _ := aes.NewCipher(key[:])
     aesgcm, _ := cipher.NewGCM(block)
-    // Go 的 GCM Open 需要 ciphertext + tag 拼接
     plaintext, err := aesgcm.Open(nil, iv, append(realCipher, authTag...), nil)
     
-    if err != nil { fmt.Println("Decrypt error"); return }
+    if err != nil { return }
     
     var data struct { Rules []Rule }
     json.Unmarshal(plaintext, &data)
-    
     applyRules(data.Rules)
 }
 
@@ -185,32 +220,54 @@ func main() {
 	cfgData, _ := ioutil.ReadFile("config.json")
 	json.Unmarshal(cfgData, &config)
 
-    // 初始化 nftables
 	exec.Command("nft", "add", "table", "ip", "nat").Run()
 	exec.Command("nft", "add", "chain", "ip", "nat", "PREROUTING", "{ type nat hook prerouting priority -100; }").Run()
 	exec.Command("nft", "add", "chain", "ip", "nat", "POSTROUTING", "{ type nat hook postrouting priority 100; }").Run()
 
-    fmt.Println("Agent started in Polling Mode")
+    fmt.Println("AeroNode Agent Started (GET Mode)")
     startLoop()
 }
 GOEOF
 
+# 初始化並編譯
 go mod init agent > /dev/null 2>&1
-go build -ldflags="-s -w" -o aero-agent main.go
+if ! go build -ldflags="-s -w" -o aero-agent main.go; then
+    echo -e "\${RED}編譯失敗！請檢查 Go 環境或錯誤日誌。\${NC}"
+    exit 1
+fi
+
+# 5. 創建服務與啟動檢查
+echo -e "\${BLUE}[4/4] 註冊系統服務...\${NC}"
 
 cat > /etc/systemd/system/$SERVICE_NAME.service <<EOF
 [Unit]
-Description=AeroNode Agent V2
+Description=AeroNode Agent
 After=network.target
 [Service]
 ExecStart=$INSTALL_DIR/aero-agent
 Restart=always
+RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload && systemctl enable $SERVICE_NAME && systemctl restart $SERVICE_NAME
-echo -e "\\n\\033[32m[安裝完成]\\033[0m Agent V2 (被動輪詢版) 已啟動！"
+systemctl daemon-reload
+systemctl enable $SERVICE_NAME
+systemctl restart $SERVICE_NAME
+
+# 6. 最終狀態確認 (增加詳細診斷)
+sleep 2
+if systemctl is-active --quiet $SERVICE_NAME; then
+    echo -e "\n\${GREEN}✅ 安裝成功！Agent 正在運行。\${NC}"
+    echo -e "請回到面板查看節點狀態 (可能需要等待 10-60 秒)。"
+else
+    echo -e "\n\${RED}❌ Agent 啟動失敗！\${NC}"
+    echo -e "以下是錯誤日誌 (Journalctl):"
+    echo "-----------------------------------"
+    journalctl -u $SERVICE_NAME -n 10 --no-pager
+    echo "-----------------------------------"
+    echo -e "請截圖以上日誌進行反饋。"
+fi
 `;
   return new NextResponse(script, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 }
