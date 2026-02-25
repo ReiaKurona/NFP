@@ -1,7 +1,8 @@
 import { kv } from "@vercel/kv";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
-import { authenticator } from "otplib";
+// 使用 require 繞過 Turbopack 的嚴格檢查
+const { authenticator } = require("otplib");
 
 function encryptPayload(data: any, token: string) {
   const key = crypto.createHash("sha256").update(token).digest();
