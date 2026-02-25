@@ -1,9 +1,8 @@
-// app/api/install/route.ts
 import { NextResponse } from "next/server";
 
 export async function GET() {
   const script = `#!/bin/bash
-echo -e "\\033[34m[AeroNode] 開始安裝輕量級被動 Agent...\\033[0m"
+echo -e "\\033[34m[AeroNode] 開始安裝並掃描現有規則...\\033[0m"
 
 TOKEN=""
 PORT="8080"
@@ -25,9 +24,7 @@ fi
 INSTALL_DIR="/opt/aero-agent"
 SERVICE_NAME="aero-agent"
 
-# 安裝 Go 環境
 if ! command -v go &> /dev/null; then
-    echo "未檢測到 Go，正在安裝..."
     wget -q https://go.dev/dl/go1.21.5.linux-amd64.tar.gz
     rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz
     export PATH=$PATH:/usr/local/go/bin
@@ -38,7 +35,6 @@ fi
 mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
 
-# 寫入配置與原始碼
 cat > config.json <<EOF
 { "token": "$TOKEN", "port": $PORT }
 EOF
@@ -56,6 +52,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -66,16 +63,6 @@ type Config struct {
 	Port  int    \`json:"port"\`
 }
 
-type EncryptedPayload struct {
-	Payload string \`json:"payload"\`
-	IV      string \`json:"iv"\`
-}
-
-type Command struct {
-	Action string \`json:"action"\`
-	Rules  []Rule \`json:"rules"\`
-}
-
 type Rule struct {
 	ListenPort string \`json:"listen_port"\`
 	DestIP     string \`json:"dest_ip"\`
@@ -84,6 +71,29 @@ type Rule struct {
 }
 
 var config Config
+
+// 智能掃描現有 nftables 規則
+func parseExistingRules() []Rule {
+	var rules[]Rule
+	out, err := exec.Command("nft", "list", "chain", "ip", "nat", "PREROUTING").Output()
+	if err != nil { return rules }
+	
+	// 解析類似: tcp dport 10000-20000 counter dnat to 1.1.1.1:10000-20000
+	re := regexp.MustCompile(\`(tcp|udp)\\s+dport\\s+([\\d-]+).*?dnat\\s+to\\s+([\\d\\.]+):([\\d-]+)\`)
+	lines := strings.Split(string(out), "\\n")
+	for _, line := range lines {
+		matches := re.FindStringSubmatch(line)
+		if len(matches) == 5 {
+			rules = append(rules, Rule{
+				Protocol:   matches[1],
+				ListenPort: matches[2],
+				DestIP:     matches[3],
+				DestPort:   matches[4],
+			})
+		}
+	}
+	return rules
+}
 
 func main() {
 	cfgData, _ := ioutil.ReadFile("config.json")
@@ -96,7 +106,8 @@ func main() {
 	http.HandleFunc("/sync", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" { http.Error(w, "Method not allowed", 405); return }
 		body, _ := ioutil.ReadAll(r.Body)
-		var ep EncryptedPayload
+		
+		var ep struct { Payload, IV string }
 		json.Unmarshal(body, &ep)
 
 		key := sha256.Sum256([]byte(config.Token))
@@ -106,13 +117,16 @@ func main() {
 		block, _ := aes.NewCipher(key[:])
 		aesgcm, _ := cipher.NewGCM(block)
 		decryptedData, err := aesgcm.Open(nil, iv, ciphertext, nil)
-		
 		if err != nil { http.Error(w, "Auth Failed", 403); return }
 
-		var cmd Command
+		var cmd struct { Action string; Rules []Rule }
 		json.Unmarshal(decryptedData, &cmd)
 
-		if cmd.Action == "APPLY" {
+		response := map[string]interface{}{}
+
+		if cmd.Action == "PULL_EXISTING" {
+			response["existing_rules"] = parseExistingRules()
+		} else if cmd.Action == "APPLY" {
 			exec.Command("nft", "flush", "chain", "ip", "nat", "PREROUTING").Run()
 			exec.Command("nft", "flush", "chain", "ip", "nat", "POSTROUTING").Run()
 			for _, rule := range cmd.Rules {
@@ -125,9 +139,10 @@ func main() {
 
 		out, _ := exec.Command("cat", "/proc/loadavg").Output()
 		load := strings.Fields(string(out))[0]
-		stats := map[string]interface{}{ "cpu_load": load, "goroutines": runtime.NumGoroutine(), "time": time.Now().Unix() }
+		response["stats"] = map[string]interface{}{ "cpu_load": load, "goroutines": runtime.NumGoroutine() }
+		
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(stats)
+		json.NewEncoder(w).Encode(response)
 	})
 
 	addr := fmt.Sprintf(":%d", config.Port)
@@ -136,33 +151,21 @@ func main() {
 }
 GOEOF
 
-# 編譯與啟動服務
 go mod init agent > /dev/null 2>&1
 go build -ldflags="-s -w" -o aero-agent main.go
 
-cat > /etc/systemd/system/$SERVICE_NAME.service <<EOF[Unit]
+cat > /etc/systemd/system/$SERVICE_NAME.service <<EOF
+[Unit]
 Description=AeroNode Agent
-After=network.target
-
 [Service]
-Type=simple
-WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/aero-agent
 Restart=always
-RestartSec=5
-
 [Install]
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable $SERVICE_NAME
-systemctl restart $SERVICE_NAME
-
-echo -e "\\n\\033[32m[安裝完成]\\033[0m 代理已在背景運行 (Port: $PORT)"
+systemctl daemon-reload && systemctl enable $SERVICE_NAME && systemctl restart $SERVICE_NAME
+echo -e "\\n\\033[32m[安裝完成]\\033[0m 代理已運行！"
 `;
-
-  return new NextResponse(script, {
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-  });
+  return new NextResponse(script, { headers: { "Content-Type": "text/plain" } });
 }
