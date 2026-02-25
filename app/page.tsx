@@ -232,7 +232,7 @@ function ForcePasswordChange({ api, setAuth, onComplete }: any) {
   );
 }
 
-// 儀表盤
+// 儀表盤視圖 (增加 RAM 和 網速顯示)
 function DashboardView({ nodes, allRules }: any) {
   return (
     <div className="space-y-6">
@@ -248,8 +248,13 @@ function DashboardView({ nodes, allRules }: any) {
       </div>
       
       {nodes.map((n: any) => {
-        // 判斷 60秒內有心跳視為在線
         const isOnline = n.lastSeen && (Date.now() - n.lastSeen < 60000);
+        // 解析 Agent 回傳的新指標
+        const ram = n.stats?.ram_usage || "0";
+        const rx = n.stats?.rx_speed || "0 B/s";
+        const tx = n.stats?.tx_speed || "0 B/s";
+        const cpu = n.stats?.cpu_load || "0.0";
+
         return (
           <motion.div key={n.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-[#F0F4EF] dark:bg-[#202522] rounded-[32px] p-6 relative overflow-hidden">
             <div className="flex justify-between items-center mb-6">
@@ -262,14 +267,37 @@ function DashboardView({ nodes, allRules }: any) {
               </span>
             </div>
             
+            {/* 資源進度條區域 */}
+            <div className="space-y-3 mb-6">
+                <div className="space-y-1">
+                    <div className="flex justify-between text-xs text-gray-500">
+                        <span>CPU 負載</span>
+                        <span>{Math.min(parseFloat(cpu)*10, 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="h-2 w-full bg-gray-200 dark:bg-black/20 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded-full transition-all duration-1000" style={{ width: `${Math.min(parseFloat(cpu)*10, 100)}%` }}></div>
+                    </div>
+                </div>
+                <div className="space-y-1">
+                    <div className="flex justify-between text-xs text-gray-500">
+                        <span>內存使用</span>
+                        <span>{ram}%</span>
+                    </div>
+                    <div className="h-2 w-full bg-gray-200 dark:bg-black/20 rounded-full overflow-hidden">
+                        <div className="h-full bg-purple-500 rounded-full transition-all duration-1000" style={{ width: `${ram}%` }}></div>
+                    </div>
+                </div>
+            </div>
+
+            {/* 網速網格 */}
             <div className="grid grid-cols-2 gap-3">
                <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
-                 <span className="text-xs text-gray-500 mb-1">CPU 負載</span>
-                 <span className="font-mono text-sm font-bold">{n.stats?.cpu_load || "-"}</span>
+                 <span className="text-xs text-gray-500 mb-1">↓ 下載速率</span>
+                 <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">{rx}</span>
                </div>
                <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
-                 <span className="text-xs text-gray-500 mb-1">協程數</span>
-                 <span className="font-mono text-sm font-bold">{n.stats?.goroutines || "-"}</span>
+                 <span className="text-xs text-gray-500 mb-1">↑ 上傳速率</span>
+                 <span className="font-mono text-sm font-bold text-blue-600 dark:text-blue-400">{tx}</span>
                </div>
             </div>
           </motion.div>
