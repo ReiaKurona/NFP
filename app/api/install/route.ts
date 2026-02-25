@@ -1,30 +1,45 @@
 import { NextResponse } from "next/server";
 
-export async function GET() {
-  const script = `#!/bin/bash
-echo -e "\\033[34m[AeroNode] 開始安裝並掃描現有規則...\\033[0m"
+export async function GET(req: Request) {
+  // 獲取面板的根域名，用於 Agent 回報狀態
+  const { searchParams } = new URL(req.url);
+  // 如果參數裡沒傳 panel，嘗試從 header host 抓取，確保不為空
+  const host = req.headers.get("host");
+  const protocol = host?.includes("localhost") ? "http" : "https";
+  const defaultPanel = host ? `${protocol}://${host}` : "";
+  const panelUrl = searchParams.get("panel") || defaultPanel;
 
+  const script = `#!/bin/bash
+echo -e "\\033[34m[AeroNode] 開始安裝智能 Agent (主動匯報模式)...\\033[0m"
+
+# 參數解析
 TOKEN=""
 PORT="8080"
+NODE_ID=""
+PANEL_URL="${panelUrl}"
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --token) TOKEN="$2"; shift ;;
         --port) PORT="$2"; shift ;;
+        --id) NODE_ID="$2"; shift ;;
+        --panel) PANEL_URL="$2"; shift ;;
         *) echo "未知參數: $1"; exit 1 ;;
     esac
     shift
 done
 
-if [ -z "$TOKEN" ]; then
-    echo -e "\\033[31m錯誤: 必須提供 --token 參數。\\033[0m"
+if [ -z "$TOKEN" ] || [ -z "$NODE_ID" ]; then
+    echo -e "\\033[31m錯誤: 缺少 Token 或 Node ID。請從面板重新複製安裝指令。\\033[0m"
     exit 1
 fi
 
 INSTALL_DIR="/opt/aero-agent"
 SERVICE_NAME="aero-agent"
 
+# 安裝 Go
 if ! command -v go &> /dev/null; then
+    echo "正在安裝 Go 環境..."
     wget -q https://go.dev/dl/go1.21.5.linux-amd64.tar.gz
     rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz
     export PATH=$PATH:/usr/local/go/bin
@@ -35,14 +50,22 @@ fi
 mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
 
+# 寫入配置
 cat > config.json <<EOF
-{ "token": "$TOKEN", "port": $PORT }
+{ 
+  "token": "$TOKEN", 
+  "port": $PORT,
+  "node_id": "$NODE_ID",
+  "panel_url": "$PANEL_URL"
+}
 EOF
 
+# 寫入 Go 源碼 (包含心跳機制)
 cat > main.go << 'GOEOF'
 package main
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
@@ -59,8 +82,10 @@ import (
 )
 
 type Config struct {
-	Token string \`json:"token"\`
-	Port  int    \`json:"port"\`
+	Token    string \`json:"token"\`
+	Port     int    \`json:"port"\`
+	NodeId   string \`json:"node_id"\`
+	PanelUrl string \`json:"panel_url"\`
 }
 
 type Rule struct {
@@ -72,24 +97,50 @@ type Rule struct {
 
 var config Config
 
-// 智能掃描現有 nftables 規則
+// 獲取系統狀態
+func getStats() map[string]interface{} {
+    out, _ := exec.Command("cat", "/proc/loadavg").Output()
+    load := strings.Fields(string(out))[0]
+    
+    return map[string]interface{}{
+        "cpu_load": load,
+        "goroutines": runtime.NumGoroutine(),
+        // 這裡可以擴展更多監控指標
+    }
+}
+
+// 主動向面板匯報心跳
+func startHeartbeat() {
+    for {
+        stats := getStats()
+        payload := map[string]interface{}{
+            "nodeId": config.NodeId,
+            "token":  config.Token,
+            "stats":  stats,
+        }
+        jsonBody, _ := json.Marshal(payload)
+        
+        // 發送 HTTPS POST 到 Vercel
+        if config.PanelUrl != "" {
+            // 忽略錯誤，防止因面板暫時不可用導致 Agent 崩潰
+            http.Post(config.PanelUrl + "/api/report", "application/json", bytes.NewBuffer(jsonBody))
+        }
+        
+        time.Sleep(10 * time.Second) // 每10秒匯報一次
+    }
+}
+
+// 掃描現有規則
 func parseExistingRules() []Rule {
 	var rules[]Rule
 	out, err := exec.Command("nft", "list", "chain", "ip", "nat", "PREROUTING").Output()
 	if err != nil { return rules }
-	
-	// 解析類似: tcp dport 10000-20000 counter dnat to 1.1.1.1:10000-20000
 	re := regexp.MustCompile(\`(tcp|udp)\\s+dport\\s+([\\d-]+).*?dnat\\s+to\\s+([\\d\\.]+):([\\d-]+)\`)
 	lines := strings.Split(string(out), "\\n")
 	for _, line := range lines {
 		matches := re.FindStringSubmatch(line)
 		if len(matches) == 5 {
-			rules = append(rules, Rule{
-				Protocol:   matches[1],
-				ListenPort: matches[2],
-				DestIP:     matches[3],
-				DestPort:   matches[4],
-			})
+			rules = append(rules, Rule{Protocol: matches[1], ListenPort: matches[2], DestIP: matches[3], DestPort: matches[4]})
 		}
 	}
 	return rules
@@ -99,10 +150,15 @@ func main() {
 	cfgData, _ := ioutil.ReadFile("config.json")
 	json.Unmarshal(cfgData, &config)
 
+    // 初始化 nftables
 	exec.Command("nft", "add", "table", "ip", "nat").Run()
 	exec.Command("nft", "add", "chain", "ip", "nat", "PREROUTING", "{ type nat hook prerouting priority -100; }").Run()
 	exec.Command("nft", "add", "chain", "ip", "nat", "POSTROUTING", "{ type nat hook postrouting priority 100; }").Run()
 
+    // 啟動心跳協程
+    go startHeartbeat()
+
+    // 啟動監聽服務 (接收規則下發)
 	http.HandleFunc("/sync", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" { http.Error(w, "Method not allowed", 405); return }
 		body, _ := ioutil.ReadAll(r.Body)
@@ -136,13 +192,9 @@ func main() {
 				exec.Command("sh", "-c", fmt.Sprintf("nft add rule ip nat POSTROUTING ip daddr %s %s dport %s counter masquerade", rule.DestIP, proto, rule.DestPort)).Run()
 			}
 		}
-
-		out, _ := exec.Command("cat", "/proc/loadavg").Output()
-		load := strings.Fields(string(out))[0]
-		response["stats"] = map[string]interface{}{ "cpu_load": load, "goroutines": runtime.NumGoroutine() }
-		
+        
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 	})
 
 	addr := fmt.Sprintf(":%d", config.Port)
@@ -165,7 +217,7 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload && systemctl enable $SERVICE_NAME && systemctl restart $SERVICE_NAME
-echo -e "\\n\\033[32m[安裝完成]\\033[0m 代理已運行！"
+echo -e "\\n\\033[32m[安裝完成]\\033[0m Agent已啟動！(Version: Heartbeat Mode)"
 `;
-  return new NextResponse(script, { headers: { "Content-Type": "text/plain" } });
+  return new NextResponse(script, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 }
