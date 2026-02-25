@@ -7,6 +7,7 @@ export async function GET(req: Request) {
   const defaultPanel = host ? `${protocol}://${host}` : "";
   const panelUrl = searchParams.get("panel") || defaultPanel;
 
+  // 這是 Bash 腳本，它會自動寫入並運行 Python Agent
   const script = `#!/bin/bash
 
 # 定義顏色
@@ -16,10 +17,7 @@ YELLOW='\\033[0;33m'
 BLUE='\\033[0;34m'
 NC='\\033[0m'
 
-echo -e "\${BLUE}[AeroNode] 開始安裝 V3.1 (強健網絡版)... \${NC}"
-
-# 清理舊的安裝殘留
-rm -rf /opt/aero-agent/go.tar.gz
+echo -e "\${BLUE}[AeroNode] 開始安裝 V4.0 (Python 極速版)... \${NC}"
 
 # 1. 參數解析
 TOKEN=""
@@ -44,221 +42,228 @@ fi
 INSTALL_DIR="/opt/aero-agent"
 SERVICE_NAME="aero-agent"
 
-# 2. 檢測網絡並安裝 Go
-echo -e "\${BLUE}[1/4] 檢查 Go 環境...\${NC}"
+# 2. 檢查 Python 環境
+echo -e "\${BLUE}[1/4] 檢查 Python 環境...\${NC}"
 
-# 判斷是否需要下載 Go
-NEED_INSTALL=true
-if command -v go &> /dev/null; then
-    GO_VERSION=$(go version | awk '{print $3}')
-    echo -e "檢測到現有 Go 版本: $GO_VERSION"
-    NEED_INSTALL=false
-fi
-
-if [ "$NEED_INSTALL" = true ]; then
-    echo -e "\${YELLOW}未檢測到 Go，準備下載...\${NC}"
-    
-    # 智能選擇下載源
-    DOWNLOAD_URL="https://go.dev/dl/go1.21.5.linux-amd64.tar.gz"
-    if ! curl -s --max-time 3 https://google.com > /dev/null; then
-        echo -e "無法連接國際網絡，切換至 \${GREEN}阿里雲鏡像 (Aliyun)\${NC}..."
-        DOWNLOAD_URL="https://mirrors.aliyun.com/golang/go1.21.5.linux-amd64.tar.gz"
-        export GOPROXY=https://goproxy.cn,direct
-    fi
-
-    # 下載並檢查狀態
-    echo -e "正在下載: $DOWNLOAD_URL"
-    wget --no-check-certificate -q $DOWNLOAD_URL -O go.tar.gz
-    
-    # 檢查文件是否下載成功 (大於 1MB)
-    FILE_SIZE=$(du -k go.tar.gz | cut -f1)
-    if [ ! -f "go.tar.gz" ] || [ "$FILE_SIZE" -lt 1000 ]; then
-        echo -e "\${RED}錯誤: Go 安裝包下載失敗或文件損壞！\${NC}"
-        echo -e "請嘗試手動安裝 Go 後再運行此腳本。"
-        rm -f go.tar.gz
+if ! command -v python3 &> /dev/null; then
+    echo -e "\${YELLOW}未檢測到 Python3，正在安裝...\${NC}"
+    if [ -f /etc/debian_version ]; then
+        apt-get update && apt-get install -y python3 python3-pip
+    elif [ -f /etc/redhat-release ]; then
+        yum install -y python3 python3-pip
+    elif [ -f /etc/alpine-release ]; then
+        apk add python3 py3-pip
+    else
+        echo -e "\${RED}無法自動安裝 Python，請手動安裝 python3 和 pip。\${NC}"
         exit 1
     fi
-
-    echo -e "下載成功，正在解壓..."
-    rm -rf /usr/local/go
-    if ! tar -C /usr/local -xzf go.tar.gz; then
-         echo -e "\${RED}錯誤: 解壓失敗！文件可能已損壞。\${NC}"
-         exit 1
-    fi
-    
-    # 立即更新環境變量
-    export PATH=$PATH:/usr/local/go/bin
-    echo "export PATH=\\$PATH:/usr/local/go/bin" >> /etc/profile
-    rm -f go.tar.gz
 fi
 
-# 再次驗證 Go 是否可用
-if ! /usr/local/go/bin/go version &> /dev/null && ! command -v go &> /dev/null; then
-    echo -e "\${RED}錯誤: Go 安裝後無法執行。請檢查系統架構 (必須是 x86_64/amd64)。\${NC}"
-    exit 1
+# 3. 安裝加密依賴 (PyCryptodome)
+echo -e "\${BLUE}[2/4] 安裝依賴庫...\${NC}"
+# 嘗試切換 pip 國內源
+pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple > /dev/null 2>&1
+
+# 兼容新版 Linux 的 pip 限制
+PIP_ARGS=""
+if pip3 install --help | grep -q "break-system-packages"; then
+    PIP_ARGS="--break-system-packages"
+fi
+
+if ! pip3 install pycryptodome requests $PIP_ARGS; then
+    echo -e "\${YELLOW}pip 安裝失敗，嘗試使用系統包管理器...\${NC}"
+    if [ -f /etc/debian_version ]; then
+        apt-get install -y python3-pycryptodome
+    elif [ -f /etc/alpine-release ]; then
+        apk add py3-pycryptodome
+    else
+        echo -e "\${RED}依賴安裝失敗，請手動運行: pip3 install pycryptodome\${NC}"
+        exit 1
+    fi
 fi
 
 mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
 
-# 3. 寫入配置與代碼
-echo -e "\${BLUE}[2/4] 生成 Agent 配置...\${NC}"
+# 4. 寫入 Python Agent 腳本
+echo -e "\${BLUE}[3/4] 部署 Agent 代碼...\${NC}"
 
 cat > config.json <<EOF
 { "token": "$TOKEN", "node_id": "$NODE_ID", "panel_url": "$PANEL_URL" }
 EOF
 
-cat > main.go << 'GOEOF'
-package main
+cat > agent.py << 'PYEOF'
+import sys
+import json
+import time
+import base64
+import urllib.request
+import urllib.parse
+import subprocess
+import os
+from Crypto.Cipher import AES
+from Crypto.Hash import SHA256
 
-import (
-	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"io/ioutil"
-	"net/http"
-	"net/url"
-	"os/exec"
-	"runtime"
-	"strings"
-	"time"
-)
+# 配置加載
+try:
+    with open("config.json", "r") as f:
+        CONFIG = json.load(f)
+except:
+    print("Config file not found")
+    sys.exit(1)
 
-type Config struct {
-	Token    string \`json:"token"\`
-	NodeId   string \`json:"node_id"\`
-	PanelUrl string \`json:"panel_url"\`
-}
+# 加密工具類
+class CryptoUtils:
+    @staticmethod
+    def decrypt(encrypted_hex, iv_hex, token):
+        try:
+            key = SHA256.new(token.encode('utf-8')).digest()
+            ciphertext = bytes.fromhex(encrypted_hex)
+            iv = bytes.fromhex(iv_hex)
+            
+            # 拆分 Tag 和 密文 (Node.js GCM 通常是 CipherText + Tag)
+            tag = ciphertext[-16:]
+            real_ciphertext = ciphertext[:-16]
+            
+            cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
+            plaintext = cipher.decrypt_and_verify(real_ciphertext, tag)
+            return json.loads(plaintext.decode('utf-8'))
+        except Exception as e:
+            print(f"Decryption failed: {e}")
+            return None
 
-type HeartbeatResp struct {
-    Success   bool \`json:"success"\`
-    Interval  int  \`json:"interval"\`
-    HasCmd    bool \`json:"has_cmd"\`
-}
+# 系統操作類
+class SystemUtils:
+    @staticmethod
+    def get_stats():
+        try:
+            with open("/proc/loadavg", "r") as f:
+                load = f.read().split()[0]
+        except:
+            load = "0.0"
+        return {"cpu_load": load, "goroutines": 1} # Python 單線程
 
-type Rule struct {
-	ListenPort string \`json:"listen_port"\`
-	DestIP     string \`json:"dest_ip"\`
-	DestPort   string \`json:"dest_port"\`
-	Protocol   string \`json:"protocol"\`
-}
+    @staticmethod
+    def run_nft_cmd(cmd):
+        subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-var config Config
+    @staticmethod
+    def apply_rules(rules):
+        SystemUtils.run_nft_cmd("nft flush chain ip nat PREROUTING")
+        SystemUtils.run_nft_cmd("nft flush chain ip nat POSTROUTING")
+        for r in rules:
+            p = r.get("protocol", "tcp")
+            sport = r["listen_port"]
+            dip = r["dest_ip"]
+            dport = r["dest_port"]
+            
+            # PREROUTING (DNAT)
+            dnat = f"nft add rule ip nat PREROUTING {p} dport {sport} counter dnat to {dip}:{dport}"
+            SystemUtils.run_nft_cmd(dnat)
+            
+            # POSTROUTING (SNAT/Masquerade)
+            snat = f"nft add rule ip nat POSTROUTING ip daddr {dip} {p} dport {dport} counter masquerade"
+            SystemUtils.run_nft_cmd(snat)
 
-func getStats() map[string]interface{} {
-    out, _ := exec.Command("cat", "/proc/loadavg").Output()
-    parts := strings.Fields(string(out))
-    load := "0.0"
-    if len(parts) > 0 { load = parts[0] }
-    return map[string]interface{}{ "cpu_load": load, "goroutines": runtime.NumGoroutine() }
-}
+    @staticmethod
+    def init_nftables():
+        SystemUtils.run_nft_cmd("nft add table ip nat")
+        SystemUtils.run_nft_cmd("nft add chain ip nat PREROUTING { type nat hook prerouting priority -100; }")
+        SystemUtils.run_nft_cmd("nft add chain ip nat POSTROUTING { type nat hook postrouting priority 100; }")
 
-func startLoop() {
-    client := &http.Client{Timeout: 15 * time.Second}
+# 網絡請求類
+class NetworkClient:
+    @staticmethod
+    def heartbeat():
+        try:
+            payload = {
+                "nodeId": CONFIG["node_id"],
+                "token": CONFIG["token"],
+                "stats": SystemUtils.get_stats()
+            }
+            # Base64 URL Safe Encoding
+            json_bytes = json.dumps(payload).encode('utf-8')
+            b64_data = base64.b64encode(json_bytes).decode('utf-8')
+            # 再次 URL Encode 確保 + 號不丟失
+            safe_data = urllib.parse.quote(b64_data)
+            
+            url = f"{CONFIG['panel_url']}/api?action=HEARTBEAT&data={safe_data}"
+            req = urllib.request.Request(url)
+            # 偽裝 User-Agent 防止被 Vercel 攔截
+            req.add_header('User-Agent', 'AeroNode-Agent/4.0')
+            
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode('utf-8'))
+                    return data
+        except Exception as e:
+            print(f"Heartbeat Error: {e}")
+        return None
+
+    @staticmethod
+    def fetch_config():
+        try:
+            url = f"{CONFIG['panel_url']}/api"
+            data = json.dumps({
+                "action": "FETCH_CONFIG",
+                "nodeId": CONFIG["node_id"],
+                "token": CONFIG["token"]
+            }).encode('utf-8')
+            
+            req = urllib.request.Request(url, data=data, method="POST")
+            req.add_header('Content-Type', 'application/json')
+            req.add_header('User-Agent', 'AeroNode-Agent/4.0')
+            
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                raw = json.loads(resp.read().decode('utf-8'))
+                # 解密
+                decrypted = CryptoUtils.decrypt(raw['payload'], raw['iv'], CONFIG['token'])
+                if decrypted and 'rules' in decrypted:
+                    SystemUtils.apply_rules(decrypted['rules'])
+                    print("Rules updated successfully")
+        except Exception as e:
+            print(f"Fetch Config Error: {e}")
+
+# 主程序
+def main():
+    print("AeroNode Python Agent Started")
+    SystemUtils.init_nftables()
     
-    for {
-        payload := map[string]interface{}{
-            "nodeId": config.NodeId,
-            "token":  config.Token,
-            "stats":  getStats(),
-        }
-        jsonBytes, _ := json.Marshal(payload)
-        b64Data := base64.StdEncoding.EncodeToString(jsonBytes)
-        safeData := url.QueryEscape(b64Data)
-        targetUrl := fmt.Sprintf("%s/api?action=HEARTBEAT&data=%s", config.PanelUrl, safeData)
+    while True:
+        resp = NetworkClient.heartbeat()
+        interval = 60
         
-        resp, err := client.Get(targetUrl)
-        var interval = 60
-        if err == nil && resp.StatusCode == 200 {
-            var hbResp HeartbeatResp
-            json.NewDecoder(resp.Body).Decode(&hbResp)
-            resp.Body.Close()
-            if hbResp.Interval > 0 { interval = hbResp.Interval }
-            if hbResp.HasCmd { fetchAndApplyRules(client) }
-        }
-        time.Sleep(time.Duration(interval) * time.Second)
-    }
-}
+        if resp:
+            if resp.get("success"):
+                interval = resp.get("interval", 60)
+                if resp.get("has_cmd"):
+                    NetworkClient.fetch_config()
+            else:
+                print(f"Server returned error: {resp}")
+        
+        time.sleep(interval)
 
-func fetchAndApplyRules(client *http.Client) {
-    payload, _ := json.Marshal(map[string]interface{}{ "action": "FETCH_CONFIG", "nodeId": config.NodeId, "token": config.Token })
-    resp, err := client.Post(config.PanelUrl+"/api", "application/json", bytes.NewBuffer(payload))
-    if err != nil { return }
-    defer resp.Body.Close()
-    
-    body, _ := ioutil.ReadAll(resp.Body)
-    var ep struct { Payload string; IV string }
-    json.Unmarshal(body, &ep)
-    
-    key := sha256.Sum256([]byte(config.Token))
-    ciphertext, _ := hex.DecodeString(ep.Payload)
-    iv, _ := hex.DecodeString(ep.IV)
-    if len(ciphertext) < 16 { return }
-    
-    block, _ := aes.NewCipher(key[:])
-    aesgcm, _ := cipher.NewGCM(block)
-    plaintext, err := aesgcm.Open(nil, iv, ciphertext, nil)
-    if err != nil { return }
-    
-    var data struct { Rules []Rule }
-    json.Unmarshal(plaintext, &data)
-    applyRules(data.Rules)
-}
+if __name__ == "__main__":
+    main()
+PYEOF
 
-func applyRules(rules []Rule) {
-    exec.Command("nft", "flush", "chain", "ip", "nat", "PREROUTING").Run()
-    exec.Command("nft", "flush", "chain", "ip", "nat", "POSTROUTING").Run()
-    for _, r := range rules {
-        p := r.Protocol
-        if p == "" { p = "tcp" }
-        exec.Command("sh", "-c", fmt.Sprintf("nft add rule ip nat PREROUTING %s dport %s counter dnat to %s:%s", p, r.ListenPort, r.DestIP, r.DestPort)).Run()
-        exec.Command("sh", "-c", fmt.Sprintf("nft add rule ip nat POSTROUTING ip daddr %s %s dport %s counter masquerade", r.DestIP, p, r.DestPort)).Run()
-    }
-}
-
-func main() {
-	cfgData, _ := ioutil.ReadFile("config.json")
-	json.Unmarshal(cfgData, &config)
-	exec.Command("nft", "add", "table", "ip", "nat").Run()
-	exec.Command("nft", "add", "chain", "ip", "nat", "PREROUTING", "{ type nat hook prerouting priority -100; }").Run()
-	exec.Command("nft", "add", "chain", "ip", "nat", "POSTROUTING", "{ type nat hook postrouting priority 100; }").Run()
-    startLoop()
-}
-GOEOF
-
-# 4. 編譯與安裝
-echo -e "\${BLUE}[3/4] 編譯 Agent 核心...\${NC}"
-
-# 強制使用絕對路徑調用 Go，確保能夠找到命令
-GO_BIN="/usr/local/go/bin/go"
-if ! [ -x "$GO_BIN" ]; then
-    GO_BIN=$(command -v go)
-fi
-
-$GO_BIN mod init agent > /dev/null 2>&1
-if ! $GO_BIN build -ldflags="-s -w" -o aero-agent main.go; then
-    echo -e "\${RED}編譯失敗！可能原因：\${NC}"
-    echo -e "1. VPS 內存不足 (建議至少 512MB)"
-    echo -e "2. Go 國內源配置失敗"
-    echo -e "3. 系統架構不是 amd64"
-    exit 1
-fi
-
+# 5. 創建服務
 echo -e "\${BLUE}[4/4] 啟動服務...\${NC}"
+
+# 找到 python3 的絕對路徑
+PY_BIN=$(command -v python3)
 
 cat > /etc/systemd/system/$SERVICE_NAME.service <<EOF
 [Unit]
-Description=AeroNode Agent
+Description=AeroNode Python Agent
 After=network.target
 [Service]
-ExecStart=$INSTALL_DIR/aero-agent
+ExecStart=$PY_BIN -u $INSTALL_DIR/agent.py
+WorkingDirectory=$INSTALL_DIR
 Restart=always
 RestartSec=5
+# 確保緩衝區立即輸出，方便看日誌
+Environment=PYTHONUNBUFFERED=1
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -270,10 +275,18 @@ systemctl restart $SERVICE_NAME
 sleep 2
 if systemctl is-active --quiet $SERVICE_NAME; then
     echo -e "\n\${GREEN}✅ 安裝成功！Agent 正在運行。\${NC}"
+    echo -e "Python 路徑: $PY_BIN"
+    echo -e "Agent 目錄: $INSTALL_DIR"
 else
-    echo -e "\n\${RED}❌ 服務啟動失敗，請查看日誌：\${NC}"
+    echo -e "\n\${RED}❌ 啟動失敗，請檢查日誌：\${NC}"
     journalctl -u $SERVICE_NAME -n 10 --no-pager
+    # 嘗試手動運行一次看報錯
+    echo -e "\n嘗試手動運行診斷:"
+    $PY_BIN $INSTALL_DIR/agent.py
 fi
 `;
-  return new NextResponse(script, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+
+  return new NextResponse(script, {
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
 }
