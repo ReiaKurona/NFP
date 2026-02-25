@@ -2,6 +2,9 @@ import { kv } from "@vercel/kv";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 
+// 強制禁用 Vercel 的 GET 請求緩存，確保每次心跳都執行數據庫寫入
+export const dynamic = 'force-dynamic';
+
 // 兼容 Vercel Turbopack
 const { authenticator } = require("otplib");
 
@@ -23,26 +26,50 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const action = searchParams.get("action");
-    const dataStr = searchParams.get("data");
+    let dataStr = searchParams.get("data");
+
+    // 調試日誌：查看是否有請求進來
+    if (action === "HEARTBEAT") {
+       console.log(`[Heartbeat] Received request at ${new Date().toISOString()}`);
+    }
 
     if (action === "HEARTBEAT" && dataStr) {
+      // 處理 URL 編碼可能將 + 轉為空格的問題
+      dataStr = dataStr.replace(/ /g, '+');
+      
       // 1. 解碼 Base64 數據
-      const jsonStr = Buffer.from(dataStr, 'base64').toString('utf-8');
-      const data = JSON.parse(jsonStr);
+      let data;
+      try {
+        const jsonStr = Buffer.from(dataStr, 'base64').toString('utf-8');
+        data = JSON.parse(jsonStr);
+      } catch (err) {
+        console.error("[Heartbeat] Decode Error:", err);
+        return NextResponse.json({ error: "Decode Failed" }, { status: 400 });
+      }
+
       const { nodeId, token, stats } = data;
 
       // 2. 驗證節點
       const node: any = await kv.hget("nodes", nodeId);
-      if (!node || node.token !== token) {
+      
+      if (!node) {
+        console.error(`[Heartbeat] Node not found: ${nodeId}`);
+        return NextResponse.json({ error: "Node not found" }, { status: 404 });
+      }
+      
+      if (node.token !== token) {
+        console.error(`[Heartbeat] Token mismatch for node: ${nodeId}`);
         return NextResponse.json({ error: "Auth failed" }, { status: 401 });
       }
 
-      // 3. 更新狀態
+      // 3. 更新狀態 (這是關鍵步驟)
       node.lastSeen = Date.now();
       node.stats = stats;
       await kv.hset("nodes", { [nodeId]: node });
+      
+      console.log(`[Heartbeat] Success updated node: ${nodeId}`);
 
-      // 4. 檢查是否有指令 (信箱機制)
+      // 4. 檢查是否有指令
       const pendingCmd = await kv.get(`cmd:${nodeId}`);
       
       // 5. 檢查面板活躍度
@@ -51,38 +78,35 @@ export async function GET(req: Request) {
 
       return NextResponse.json({
         success: true,
-        interval: isActive ? 3 : 60, // 活躍時3秒，閒置時60秒
+        interval: isActive ? 3 : 60,
         has_cmd: !!pendingCmd
       });
     }
     
     return NextResponse.json({ error: "Invalid GET action" });
-  } catch (e) {
-    return NextResponse.json({ error: "Server Error" }, { status: 500 });
+  } catch (e: any) {
+    console.error("[API Error]", e);
+    return NextResponse.json({ error: "Server Error: " + e.message }, { status: 500 });
   }
 }
 
-// 處理原有的 POST 請求
+// 處理 POST 請求 (保持不變，但加上日誌)
 export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { action, auth, ...data } = body;
 
-    // --- Agent 拉取配置 (保持 POST 以傳輸大量加密數據) ---
     if (action === "FETCH_CONFIG") {
       const { nodeId, token } = data;
       const node: any = await kv.hget("nodes", nodeId);
       if (!node || node.token !== token) return NextResponse.json({ error: "Auth failed" }, { status: 401 });
 
       const rules = await kv.lrange(`rules:${nodeId}`, 0, -1) || [];
-      await kv.del(`cmd:${nodeId}`); // 清空信箱
+      await kv.del(`cmd:${nodeId}`);
       return NextResponse.json(encryptPayload({ rules }, token));
     }
 
-    // ==========================================
     // --- 管理員接口 ---
-    // ==========================================
-    
     let currentHash = await kv.get<string>("admin_password");
     if (!currentHash) {
       currentHash = hashPassword("admin123");
