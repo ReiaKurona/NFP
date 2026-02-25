@@ -18,58 +18,71 @@ function encryptPayload(data: any, token: string) {
   return { payload: encrypted + cipher.getAuthTag().toString("hex"), iv: iv.toString("hex") };
 }
 
-export async function POST(req: Request) {
+// 處理 Agent 的 GET 心跳請求
+export async function GET(req: Request) {
   try {
-    const body = await req.json();
-    const { action, auth, ...data } = body;
+    const { searchParams } = new URL(req.url);
+    const action = searchParams.get("action");
+    const dataStr = searchParams.get("data");
 
-    // --- 公開接口：Agent 心跳回報 (最核心的改動) ---
-    if (action === "HEARTBEAT") {
+    if (action === "HEARTBEAT" && dataStr) {
+      // 1. 解碼 Base64 數據
+      const jsonStr = Buffer.from(dataStr, 'base64').toString('utf-8');
+      const data = JSON.parse(jsonStr);
       const { nodeId, token, stats } = data;
-      const node: any = await kv.hget("nodes", nodeId);
-      
-      // 1. 鑒權
-      if (!node || node.token !== token) return NextResponse.json({ error: "Auth failed" }, { status: 401 });
 
-      // 2. 更新節點狀態
+      // 2. 驗證節點
+      const node: any = await kv.hget("nodes", nodeId);
+      if (!node || node.token !== token) {
+        return NextResponse.json({ error: "Auth failed" }, { status: 401 });
+      }
+
+      // 3. 更新狀態
       node.lastSeen = Date.now();
-      node.stats = stats; // 保存 CPU、流量等信息
+      node.stats = stats;
       await kv.hset("nodes", { [nodeId]: node });
 
-      // 3. 檢查是否有待下發的指令 (信箱機制)
+      // 4. 檢查是否有指令 (信箱機制)
       const pendingCmd = await kv.get(`cmd:${nodeId}`);
       
-      // 4. 檢查面板是否處於「活躍狀態」
-      // 前端每 10 秒會打一次 KEEP_ALIVE，如果 30 秒內有活動，則讓 Agent 進入快速模式
+      // 5. 檢查面板活躍度
       const lastActivity = await kv.get<number>("panel_activity") || 0;
       const isActive = (Date.now() - lastActivity) < 30000;
 
       return NextResponse.json({
         success: true,
-        interval: isActive ? 3 : 60, // 活躍時 3秒一跳，閒置時 60秒一跳
-        has_cmd: !!pendingCmd // 告訴 Agent 有沒有新規則
+        interval: isActive ? 3 : 60, // 活躍時3秒，閒置時60秒
+        has_cmd: !!pendingCmd
       });
     }
+    
+    return NextResponse.json({ error: "Invalid GET action" });
+  } catch (e) {
+    return NextResponse.json({ error: "Server Error" }, { status: 500 });
+  }
+}
 
-    // --- 公開接口：Agent 拉取配置 ---
+// 處理原有的 POST 請求
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    const { action, auth, ...data } = body;
+
+    // --- Agent 拉取配置 (保持 POST 以傳輸大量加密數據) ---
     if (action === "FETCH_CONFIG") {
       const { nodeId, token } = data;
       const node: any = await kv.hget("nodes", nodeId);
       if (!node || node.token !== token) return NextResponse.json({ error: "Auth failed" }, { status: 401 });
 
-      // 讀取規則並清除待辦標記
       const rules = await kv.lrange(`rules:${nodeId}`, 0, -1) || [];
       await kv.del(`cmd:${nodeId}`); // 清空信箱
-
-      // 加密返回，確保配置不被中間人竊取
       return NextResponse.json(encryptPayload({ rules }, token));
     }
 
     // ==========================================
-    // --- 以下為管理員接口 (需要登錄) ---
+    // --- 管理員接口 ---
     // ==========================================
     
-    // 初始化密碼
     let currentHash = await kv.get<string>("admin_password");
     if (!currentHash) {
       currentHash = hashPassword("admin123");
@@ -78,7 +91,6 @@ export async function POST(req: Request) {
     const isFirstLogin = currentHash === hashPassword("admin123");
     const totpSecret = await kv.get<string>("totp_secret");
 
-    // 登錄
     if (action === "LOGIN") {
       const isPwdCorrect = hashPassword(data.password) === currentHash;
       let isTotpCorrect = false;
@@ -91,13 +103,11 @@ export async function POST(req: Request) {
 
     if (auth !== currentHash) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    // 面板保活信號 (前端定時發送，告訴後端我還在用)
     if (action === "KEEP_ALIVE") {
       await kv.set("panel_activity", Date.now());
       return NextResponse.json({ success: true });
     }
 
-    // 節點管理
     if (action === "ADD_NODE") {
       const id = Date.now().toString();
       const node = { ...data.node, id, lastSeen: 0 };
@@ -117,17 +127,14 @@ export async function POST(req: Request) {
     }
     if (action === "GET_NODES") return NextResponse.json(await kv.hgetall("nodes") || {});
     
-    // 規則管理 (保存時設置 cmd 標記，通知 Agent 來取)
     if (action === "SAVE_RULES") {
       await kv.del(`rules:${data.nodeId}`);
       if (data.rules.length > 0) await kv.rpush(`rules:${data.nodeId}`, ...data.rules);
-      // 設置信箱標記：有新指令！
       await kv.set(`cmd:${data.nodeId}`, "UPDATE_RULES"); 
       return NextResponse.json({ success: true });
     }
     if (action === "GET_RULES") return NextResponse.json(await kv.lrange(`rules:${data.nodeId}`, 0, -1) || []);
 
-    // 其他功能 (2FA/備份等)
     if (action === "CHANGE_PASSWORD") {
       const newHash = hashPassword(data.newPassword);
       await kv.set("admin_password", newHash);
@@ -160,7 +167,7 @@ export async function POST(req: Request) {
       for (const nodeId of Object.keys(rules)) {
         await kv.del(`rules:${nodeId}`);
         if (rules[nodeId].length > 0) await kv.rpush(`rules:${nodeId}`, ...rules[nodeId]);
-        await kv.set(`cmd:${nodeId}`, "UPDATE_RULES"); // 導入後觸發所有節點更新
+        await kv.set(`cmd:${nodeId}`, "UPDATE_RULES");
       }
       return NextResponse.json({ success: true });
     }
