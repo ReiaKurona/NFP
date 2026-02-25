@@ -156,19 +156,19 @@ export async function POST(req: Request) {
         await kv.set("admin_password", newHash);
         return NextResponse.json({ success: true, token: newHash });
     }
-    if (action === "GENERATE_2FA") {
-        const secret = authenticator.generateSecret();
-        return NextResponse.json({ secret, otpauth: authenticator.keyuri("Admin", "AeroNode", secret) });
-    }
-    if (action === "VERIFY_AND_ENABLE_2FA") {
-        if (authenticator.check(data.code, data.secret)) {
-            await kv.set("totp_secret", data.secret);
-            return NextResponse.json({ success: true });
-        }
-        return NextResponse.json({ error: "Code invalid" }, { status: 400 });
-    }
-    if (action === "DISABLE_2FA") { await kv.del("totp_secret"); return NextResponse.json({ success: true }); }
-    if (action === "CHECK_2FA_STATUS") return NextResponse.json({ enabled: !!totpSecret });
+    //if (action === "GENERATE_2FA") {
+    //    const secret = authenticator.generateSecret();
+    //    return NextResponse.json({ secret, otpauth: authenticator.keyuri("Admin", "AeroNode", secret) });
+    //}
+    //if (action === "VERIFY_AND_ENABLE_2FA") {
+    //    if (authenticator.check(data.code, data.secret)) {
+    //        await kv.set("totp_secret", data.secret);
+    //        return NextResponse.json({ success: true });
+    //    }
+    //    return NextResponse.json({ error: "Code invalid" }, { status: 400 });
+    //}
+    //if (action === "DISABLE_2FA") { await kv.del("totp_secret"); return NextResponse.json({ success: true }); }
+    //if (action === "CHECK_2FA_STATUS") return NextResponse.json({ enabled: !!totpSecret });
 
     // 備份
     if (action === "EXPORT_ALL") {
