@@ -3,8 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { motion, AnimatePresence } from "framer-motion";
 import { QRCodeSVG } from "qrcode.react";
-import { Shield, RefreshCw, Trash2, Home, Network, Server, User, LogOut, Palette, PauseCircle, Download, Upload, KeyRound, Smartphone, Save, ArrowRight } from "lucide-react";
-
+import { Shield, RefreshCw, Trash2, Home, Network, Server, User, LogOut, Palette, PauseCircle, Download, Upload, KeyRound, Smartphone, Save, ArrowRight, Terminal } from "lucide-react";
 const THEMES = {
   emerald: { primary: "#006C4C", onPrimary: "#FFFFFF", primaryContainer: "#89F8C7", onPrimaryContainer: "#002114" },
   ocean:   { primary: "#0061A4", onPrimary: "#FFFFFF", primaryContainer: "#D1E4FF", onPrimaryContainer: "#001D36" },
