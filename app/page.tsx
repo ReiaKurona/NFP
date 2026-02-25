@@ -236,10 +236,41 @@ function DashboardView({ nodes, allRules }: any) {
   );
 }
 
-// 節點管理
+// 節點管理視圖 (修復保存按鈕無反應問題)
 function NodesView({ nodes, api, fetchAllData }: any) {
   const [showAdd, setShowAdd] = useState(false);
-  const[newNode, setNewNode] = useState({ name: "", ip: "", port: "8080", token: crypto.randomUUID() }); // 自動生成 Token
+  // 生成隨機 Token 的兼容寫法
+  const generateToken = () => Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+  
+  const [newNode, setNewNode] = useState({ name: "", ip: "", port: "8080", token: "" });
+  const [isSaving, setIsSaving] = useState(false); // 新增 Loading 狀態
+
+  // 打開添加窗口時自動生成 Token
+  useEffect(() => {
+    if (showAdd) setNewNode(prev => ({ ...prev, token: generateToken() }));
+  }, [showAdd]);
+
+  const handleSave = async () => {
+    // 1. 表單驗證
+    if (!newNode.name) return alert("請填寫節點名稱");
+    if (!newNode.ip) return alert("請填寫公網 IP");
+
+    setIsSaving(true); // 開啟 Loading
+    try {
+      // 2. 發送請求
+      await api("ADD_NODE", { node: newNode });
+      
+      // 3. 成功處理
+      setShowAdd(false);
+      setNewNode({ name: "", ip: "", port: "8080", token: "" });
+      await fetchAllData();
+      alert("✅ 添加成功！\n請複製下方的【安裝指令】到您的服務器執行。");
+    } catch (e: any) {
+      alert("❌ 保存失敗: " + (e.message || "未知錯誤"));
+    } finally {
+      setIsSaving(false); // 關閉 Loading
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -250,29 +281,45 @@ function NodesView({ nodes, api, fetchAllData }: any) {
       <AnimatePresence>
         {showAdd && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[32px] space-y-4 overflow-hidden">
-            <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none" placeholder="節點名稱" value={newNode.name} onChange={e=>setNewNode({...newNode,name:e.target.value})} />
-            <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none" placeholder="公網 IP" value={newNode.ip} onChange={e=>setNewNode({...newNode,ip:e.target.value})} />
-            <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none" placeholder="Token (已自動生成)" value={newNode.token} onChange={e=>setNewNode({...newNode,token:e.target.value})} />
-            <motion.button whileTap={{ scale: 0.95 }} onClick={async()=>{await api("ADD_NODE",{node:newNode});setShowAdd(false);fetchAllData();}} className="w-full py-4 bg-[var(--md-primary)] text-[var(--md-on-primary)] rounded-full font-bold">保存 (下一步獲取指令)</motion.button>
+            <h3 className="font-bold text-lg px-2">填寫節點資訊</h3>
+            <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none border border-transparent focus:border-[var(--md-primary)]" placeholder="節點名稱 (如: 香港伺服器)" value={newNode.name} onChange={e=>setNewNode({...newNode,name:e.target.value})} />
+            <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none border border-transparent focus:border-[var(--md-primary)]" placeholder="公網 IP (如: 1.2.3.4)" value={newNode.ip} onChange={e=>setNewNode({...newNode,ip:e.target.value})} />
+            <div className="relative">
+              <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none text-gray-500" placeholder="Token" value={newNode.token} readOnly />
+              <button onClick={()=>setNewNode({...newNode, token: generateToken()})} className="absolute right-4 top-4 text-xs font-bold text-[var(--md-primary)]">重置</button>
+            </div>
+            
+            <motion.button 
+              whileTap={{ scale: 0.95 }} 
+              onClick={handleSave} 
+              disabled={isSaving}
+              className={`w-full py-4 rounded-full font-bold transition-all ${isSaving ? 'bg-gray-400 cursor-not-allowed' : 'bg-[var(--md-primary)] text-[var(--md-on-primary)]'}`}
+            >
+              {isSaving ? "正在保存並掃描規則..." : "保存 (下一步獲取指令)"}
+            </motion.button>
           </motion.div>
         )}
       </AnimatePresence>
 
       {nodes.map((n: any) => {
         // 生成安裝指令 (包含 panel url 和 node id)
-        const installCmd = `curl -sSL ${typeof window!=='undefined'?window.location.origin:''}/api/install | bash -s -- --token ${n.token} --id ${n.id} --panel ${typeof window!=='undefined'?window.location.origin:''}`;
+        const origin = typeof window !== 'undefined' ? window.location.origin : '';
+        const installCmd = `curl -sSL ${origin}/api/install | bash -s -- --token ${n.token} --id ${n.id} --panel ${origin}`;
+        
         return (
           <motion.div layout key={n.id} className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[32px] space-y-4">
              <div className="flex justify-between items-center">
                 <h3 className="font-bold text-lg">{n.name}</h3>
                 <div className="flex gap-2">
-                   <motion.button whileTap={{ scale: 0.9 }} onClick={async()=>{await api("SYNC_AGENT",{nodeId:n.id});alert("配置已下發");}} className="p-3 bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)] rounded-2xl"><RefreshCw className="w-5 h-5"/></motion.button>
-                   <motion.button whileTap={{ scale: 0.9 }} onClick={()=>{if(confirm("刪除？")) api("DELETE_NODE",{nodeId:n.id}).then(fetchAllData)}} className="p-3 bg-red-100 text-red-500 rounded-2xl"><Trash2 className="w-5 h-5"/></motion.button>
+                   <motion.button whileTap={{ scale: 0.9 }} onClick={async()=>{await api("SYNC_AGENT",{nodeId:n.id});alert("配置已重新下發");}} className="p-3 bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)] rounded-2xl"><RefreshCw className="w-5 h-5"/></motion.button>
+                   <motion.button whileTap={{ scale: 0.9 }} onClick={()=>{if(confirm("確定刪除此節點？")) api("DELETE_NODE",{nodeId:n.id}).then(fetchAllData)}} className="p-3 bg-red-100 dark:bg-red-900/30 text-red-500 rounded-2xl"><Trash2 className="w-5 h-5"/></motion.button>
                 </div>
              </div>
-             <div className="bg-white dark:bg-[#111318] p-4 rounded-2xl">
+             <div className="bg-white dark:bg-[#111318] p-4 rounded-2xl border border-gray-100 dark:border-white/5">
                 <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-2"><Terminal className="w-4 h-4"/> 安裝指令 (點擊複製)</p>
-                <code onClick={()=>{navigator.clipboard.writeText(installCmd);alert("已複製")}} className="block text-xs text-[var(--md-primary)] break-all cursor-pointer hover:opacity-80 transition-opacity">{installCmd}</code>
+                <code onClick={()=>{navigator.clipboard.writeText(installCmd);alert("已複製到剪貼簿！")}} className="block text-xs text-[var(--md-primary)] break-all cursor-pointer hover:opacity-80 transition-opacity leading-relaxed">
+                  {installCmd}
+                </code>
              </div>
           </motion.div>
         );
