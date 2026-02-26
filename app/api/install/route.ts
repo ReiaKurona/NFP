@@ -9,14 +9,15 @@ export async function GET(req: Request) {
   const defaultPanel = host ? `${protocol}://${host}` : "";
   const panelUrl = searchParams.get("panel") || defaultPanel;
 
+  // 注意：Python 代碼中的換行符必須寫成 \\n
   const script = `#!/bin/bash
-# AeroNode V7.0 - Config Pull Mode (配置託管版)
+# AeroNode V7.1 - 完美匹配自定義腳本邏輯版
 
 RED='\\033[0;31m'
 BLUE='\\033[0;34m'
 NC='\\033[0m'
 
-echo -e "\${BLUE}[AeroNode] 安裝 V7.0 (配置鏈接版)... \${NC}"
+echo -e "\${BLUE}[AeroNode] 安裝 V7.1 (Nftables 原生語法版)... \${NC}"
 
 TOKEN=""
 NODE_ID=""
@@ -32,7 +33,7 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-if [ -z "$TOKEN" ] || [ -z "$NODE_ID" ]; then
+if [ -z "$TOKEN" ] ||[ -z "$NODE_ID" ]; then
     echo -e "\${RED}錯誤: 參數缺失。\${NC}"
     exit 1
 fi
@@ -41,32 +42,47 @@ INSTALL_DIR="/opt/aero-agent"
 SERVICE_NAME="aero-agent"
 LOG_FILE="/var/log/aero-agent.log"
 
-# 1. 依賴
+# 1. 系統環境與防火牆優化
+echo -e "\${BLUE}[1/4] 優化系統網絡與防火牆...\${NC}"
+
+# 啟用 IP 轉發
+if ! grep -q "net.ipv4.ip_forward = 1" /etc/sysctl.conf; then
+    echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
+    sysctl -p > /dev/null 2>&1
+fi
+
+# 依賴安裝
 install_packages() {
-    if [ -f /etc/debian_version ]; then
+    if[ -f /etc/debian_version ]; then
         apt-get update -q
-        apt-get install -y -q python3 python3-pip python3-venv python3-full nftables
-    elif [ -f /etc/redhat-release ]; then
+        apt-get install -y -q python3 python3-pip python3-venv python3-full nftables ufw
+    elif[ -f /etc/redhat-release ]; then
         yum install -y python3 python3-pip nftables
-    elif [ -f /etc/alpine-release ]; then
-        apk add python3 py3-pip nftables
     fi
 }
 if ! command -v pip3 &> /dev/null || ! command -v nft &> /dev/null; then
     install_packages
 fi
 
+# 配置 UFW (參考原腳本邏輯，放行轉發)
+if command -v ufw &> /dev/null &&[ -f "/etc/default/ufw" ]; then
+    sed -i 's/DEFAULT_FORWARD_POLICY="DROP"/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
+    ufw reload > /dev/null 2>&1 || true
+fi
+
 # 2. 虛擬環境
+echo -e "\${BLUE}[2/4] 構建 Python 虛擬環境...\${NC}"
 mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
 rm -rf venv
 python3 -m venv venv
-./venv/bin/pip install --upgrade pip --index-url https://pypi.tuna.tsinghua.edu.cn/simple
-./venv/bin/pip install pycryptodome requests --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+./venv/bin/pip install --upgrade pip --index-url https://pypi.tuna.tsinghua.edu.cn/simple > /dev/null 2>&1
+./venv/bin/pip install pycryptodome requests --index-url https://pypi.tuna.tsinghua.edu.cn/simple > /dev/null 2>&1
 
 # 3. 部署代碼
+echo -e "\${BLUE}[3/4] 寫入 Agent 核心代碼...\${NC}"
 NFT_BIN=$(command -v nft)
-if [ -z "$NFT_BIN" ]; then NFT_BIN="/usr/sbin/nft"; fi
+if[ -z "$NFT_BIN" ]; then NFT_BIN="/usr/sbin/nft"; fi
 
 cat > config.json <<EOF
 { "token": "$TOKEN", "node_id": "$NODE_ID", "panel_url": "$PANEL_URL", "nft_bin": "$NFT_BIN" }
@@ -95,7 +111,6 @@ try:
     with open("config.json", "r") as f: CONFIG = json.load(f)
 except: sys.exit(1)
 
-# 構建專屬配置下載鏈接
 CONFIG_URL = f"{CONFIG['panel_url']}/api?action=DOWNLOAD_CONFIG&node_id={CONFIG['node_id']}&token={CONFIG['token']}"
 
 class Monitor:
@@ -155,28 +170,53 @@ class Monitor:
 
 monitor = Monitor()
 
+# --- 完美還原原生 Nftables 語法的模組 ---
 class SystemUtils:
     @staticmethod
     def apply_rules(rules):
-        # 簡單比較 Hash 或長度，這裡為了穩定，每次都刷新
         log(f"Syncing {len(rules)} rules...")
-        nft = "flush ruleset\\n"
-        nft += "table ip nat {\\n"
-        nft += "  chain PREROUTING { type nat hook prerouting priority -100; }\\n"
-        nft += "  chain POSTROUTING { type nat hook postrouting priority 100; }\\n"
+        
+        # 使用專屬表 aeronode，避免干擾系統其他規則
+        nft = "table ip aeronode\\n"
+        nft += "flush table ip aeronode\\n\\n"
+        
+        nft += "table ip aeronode {\\n"
+        nft += "    chain prerouting {\\n"
+        nft += "        type nat hook prerouting priority -100;\\n"
+        
+        # 寫入 DNAT 轉發規則
         for r in rules:
             p = r.get("protocol", "tcp")
             sport = r["listen_port"]
             dip = r["dest_ip"]
             dport = r["dest_port"]
-            nft += f"  add rule nat PREROUTING {p} dport {sport} counter dnat to {dip}:{dport}\\n"
-            nft += f"  add rule nat POSTROUTING ip daddr {dip} {p} dport {dport} counter masquerade\\n"
+            
+            if p == "tcp,udp" or p == "tcp+udp":
+                nft += f"        tcp dport {sport} dnat to {dip}:{dport}\\n"
+                nft += f"        udp dport {sport} dnat to {dip}:{dport}\\n"
+            else:
+                nft += f"        {p} dport {sport} dnat to {dip}:{dport}\\n"
+                
+        nft += "    }\\n\\n"
+        
+        nft += "    chain postrouting {\\n"
+        nft += "        type nat hook postrouting priority 100;\\n"
+        
+        # 寫入 Masquerade 規則 (同 IP 去重)
+        target_ips = set(r["dest_ip"] for r in rules)
+        for dip in target_ips:
+            nft += f"        ip daddr {dip} masquerade\\n"
+            
+        nft += "    }\\n"
         nft += "}\\n"
         
         try:
             with open("rules.nft", "w") as f: f.write(nft)
-            subprocess.run([CONFIG.get("nft_bin", "nft"), "-f", "rules.nft"], check=True)
-            log("Rules updated successfully.")
+            res = subprocess.run([CONFIG.get("nft_bin", "nft"), "-f", "rules.nft"], capture_output=True, text=True)
+            if res.returncode != 0:
+                log(f"Nftables Load Error: {res.stderr}")
+            else:
+                log("Rules applied successfully.")
         except Exception as e:
             log(f"Nftables Error: {e}")
 
@@ -196,7 +236,7 @@ class CryptoUtils:
 
 def download_and_apply_config():
     try:
-        req = urllib.request.Request(CONFIG_URL, headers={'User-Agent': 'AeroAgent/7.0'})
+        req = urllib.request.Request(CONFIG_URL, headers={'User-Agent': 'AeroAgent/7.1'})
         with urllib.request.urlopen(req, timeout=15) as resp:
             if resp.status == 200:
                 raw = resp.read().decode()
@@ -208,42 +248,36 @@ def download_and_apply_config():
 
 def loop():
     log("Agent started.")
-    # 啟動時先拉取一次配置
     download_and_apply_config()
-    
     last_sync = time.time()
     
     while True:
         interval = 30
         try:
-            # 1. 發送心跳
             payload = { "nodeId": CONFIG["node_id"], "token": CONFIG["token"], "stats": monitor.get_stats() }
             b64 = base64.b64encode(json.dumps(payload).encode()).decode()
             url = f"{CONFIG['panel_url']}/api?action=HEARTBEAT&data={urllib.parse.quote(b64)}"
-            req = urllib.request.Request(url, headers={'User-Agent': 'AeroAgent/7.0'})
+            req = urllib.request.Request(url, headers={'User-Agent': 'AeroAgent/7.1'})
             
             with urllib.request.urlopen(req, timeout=15) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode())
                     if data.get("interval"): interval = data["interval"]
-                    # 2. 如果面板通知有更新，或者距離上次更新超過 60 秒，則拉取配置
                     if data.get("has_cmd") or (time.time() - last_sync > 60):
                         download_and_apply_config()
                         last_sync = time.time()
-                        
         except Exception as e:
-            log(f"Heartbeat Error: {e}")
+            pass # 忽略網絡波動日誌，防止塞滿磁盤
         
         time.sleep(interval)
 
 if __name__ == "__main__":
-    try:
-        with open("/proc/sys/net/ipv4/ip_forward", "w") as f: f.write("1")
-    except: pass
     loop()
 PYEOF
 
-# 4. 服務
+# 4. 註冊服務
+echo -e "\${BLUE}[4/4] 註冊 Root 服務...\${NC}"
+
 VENV_PYTHON="$INSTALL_DIR/venv/bin/python"
 cat > /etc/systemd/system/$SERVICE_NAME.service <<EOF
 [Unit]
@@ -264,7 +298,7 @@ EOF
 systemctl daemon-reload
 systemctl enable $SERVICE_NAME
 systemctl restart $SERVICE_NAME
-echo -e "\\n\${GREEN}✅ Agent V7.0 安裝成功！日誌: $LOG_FILE \${NC}"
+echo -e "\\n\${GREEN}✅ 安裝成功！(原生 nftables 語法版)\${NC}"
 `;
   return new NextResponse(script, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 }
