@@ -168,7 +168,7 @@ class SystemUtils:
             else:
                 nft += f"        {p} dport {sport} dnat to {dip}:{dport}\\n"
                 
-        nft += "    }\\n\\n"
+        nft += "    }\\n"
         
         nft += "    chain postrouting {\\n"
         nft += "        type nat hook postrouting priority 100;\\n"
