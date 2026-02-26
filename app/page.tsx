@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 // import { QRCodeSVG } from "qrcode.react";
 import { 
   Shield, RefreshCw, Trash2, Home, Network, Server, User, LogOut, 
-  Palette, PauseCircle, Download, Upload, KeyRound, Save, Terminal 
+  Palette, PauseCircle, Download, Upload, KeyRound, Save, Terminal,Edit2 
 } from "lucide-react";
 
 const THEMES = {
