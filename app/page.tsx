@@ -352,20 +352,38 @@ function NodesView({ nodes, api, fetchAllData }: any) {
     </div>
   );
 }
-
+//規則編輯頁面
 function RulesView({ nodes, allRules, api, fetchAllData }: any) {
   const[selected, setSelected] = useState<string>(nodes[0]?.id || "");
   const [rules, setRules] = useState<any[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
-    if (selected) setRules(allRules[selected] || []);
-  }, [selected, allRules]);
+    if (selected) {
+      // 使用深拷貝避免直接修改到 allRules 中的原始數據
+      setRules(allRules[selected] ? allRules[selected].map((r: any) => ({ ...r })) :[]);
+      setIsEditing(false); // 切換節點時退出編輯模式
+    }
+  },[selected, allRules]);
 
-  const handleOptimisticUpdate = async (newRules: any[]) => {
-    setRules(newRules);
-    await api("SAVE_RULES", { nodeId: selected, rules: newRules });
-    fetchAllData(); 
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await api("SAVE_RULES", { nodeId: selected, rules });
+      await fetchAllData();
+      setIsEditing(false);
+    } catch (error) {
+      console.error("保存失敗", error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCancel = () => {
+    // 恢復為修改前的規則
+    setRules(allRules[selected] ? allRules[selected].map((r: any) => ({ ...r })) :[]);
+    setIsEditing(false);
   };
 
   if (nodes.length === 0) return <div className="text-center py-10">請先添加節點</div>;
@@ -373,43 +391,140 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
   return (
     <div className="space-y-6">
       <div className="flex overflow-x-auto gap-2 pb-2 hide-scrollbar">
-        {nodes.map((n:any)=><motion.button whileTap={{ scale: 0.95 }} key={n.id} onClick={()=>setSelected(n.id)} className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap ${selected===n.id?'bg-[var(--md-primary)] text-[var(--md-on-primary)]':'bg-[#F0F4EF] dark:bg-[#202522]'}`}>{n.name}</motion.button>)}
+        {nodes.map((n: any) => (
+          <motion.button 
+            whileTap={{ scale: 0.95 }} 
+            key={n.id} 
+            onClick={() => !isSaving && setSelected(n.id)} 
+            className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap ${selected === n.id ? 'bg-[var(--md-primary)] text-[var(--md-on-primary)] shadow-md' : 'bg-[#F0F4EF] dark:bg-[#202522] text-gray-600 dark:text-gray-300'}`}
+          >
+            {n.name}
+          </motion.button>
+        ))}
       </div>
 
       <div className="bg-[#F0F4EF] dark:bg-[#202522] p-5 rounded-[32px] space-y-4">
         <div className="flex justify-between items-center px-2">
-          <span className="font-bold">轉發規則</span>
-          <motion.button whileTap={{ scale: 0.9 }} onClick={()=>handleOptimisticUpdate([...rules,{listen_port:"",dest_ip:"",dest_port:"",protocol:"tcp"}])} className="text-[var(--md-primary)] font-bold bg-[var(--md-primary-container)] px-4 py-1.5 rounded-full text-sm">+ 添加規則</motion.button>
+          <span className="font-bold text-lg">轉發規則</span>
+          <div className="flex items-center gap-2">
+            {!isEditing ? (
+              <motion.button 
+                whileTap={{ scale: 0.9 }} 
+                onClick={() => setIsEditing(true)} 
+                className="text-[var(--md-primary)] font-bold bg-[var(--md-primary-container)] px-5 py-2 rounded-full text-sm shadow-sm"
+              >
+                編輯規則
+              </motion.button>
+            ) : (
+              <>
+                <motion.button 
+                  whileTap={{ scale: 0.9 }} 
+                  onClick={handleCancel} 
+                  disabled={isSaving}
+                  className="text-gray-600 dark:text-gray-300 font-bold px-4 py-2 rounded-full text-sm hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50"
+                >
+                  取消
+                </motion.button>
+                <motion.button 
+                  whileTap={{ scale: 0.9 }} 
+                  onClick={() => setRules([...rules, { listen_port: "", dest_ip: "", dest_port: "", protocol: "tcp" }])} 
+                  disabled={isSaving}
+                  className="text-[var(--md-primary)] font-bold bg-[var(--md-primary-container)] px-4 py-2 rounded-full text-sm disabled:opacity-50"
+                >
+                  + 添加規則
+                </motion.button>
+                <motion.button 
+                  whileTap={{ scale: 0.9 }} 
+                  onClick={handleSave} 
+                  disabled={isSaving}
+                  className="flex items-center gap-2 text-[var(--md-on-primary)] font-bold bg-[var(--md-primary)] px-5 py-2 rounded-full text-sm shadow-md disabled:opacity-70 transition-all"
+                >
+                  {isSaving ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4 text-[var(--md-on-primary)]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      保存中...
+                    </>
+                  ) : "保存"}
+                </motion.button>
+              </>
+            )}
+          </div>
         </div>
         
-        {rules.map((r:any, idx:number) => (
-          <motion.div layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={idx} className="bg-white dark:bg-[#111318] p-5 rounded-[24px] space-y-4 shadow-sm border border-gray-100 dark:border-white/5">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-               <div className="space-y-1">
-                 <label className="text-xs font-bold text-gray-500 ml-1">本地端口 (如 8080 或 1000-2000)</label>
-                 <input value={r.listen_port} onChange={e=>{const n=[...rules];n[idx].listen_port=e.target.value;setRules(n)}} onBlur={()=>handleOptimisticUpdate(rules)} className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="Port" />
-               </div>
-               <div className="space-y-1">
-                 <label className="text-xs font-bold text-gray-500 ml-1">目標 IP</label>
-                 <input value={r.dest_ip} onChange={e=>{const n=[...rules];n[idx].dest_ip=e.target.value;setRules(n)}} onBlur={()=>handleOptimisticUpdate(rules)} className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="IP" />
-               </div>
-               <div className="space-y-1">
-                 <label className="text-xs font-bold text-gray-500 ml-1">目標端口 (對應本地)</label>
-                 <input value={r.dest_port} onChange={e=>{const n=[...rules];n[idx].dest_port=e.target.value;setRules(n)}} onBlur={()=>handleOptimisticUpdate(rules)} className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="Port" />
-               </div>
-            </div>
-            
-            <div className="flex justify-between items-center border-t border-gray-100 dark:border-white/5 pt-3">
-              <div className="flex items-center gap-2">
-                 <span className="text-xs font-bold text-gray-500">協議:</span>
-                 <select value={r.protocol} onChange={e=>{const n=[...rules];n[idx].protocol=e.target.value;handleOptimisticUpdate(n)}} className="bg-gray-50 dark:bg-[#202522] p-2 rounded-xl text-sm font-bold outline-none">
-                    <option value="tcp">TCP</option><option value="udp">UDP</option><option value="tcp,udp">TCP+UDP</option>
-                 </select>
+        {rules.length === 0 && !isEditing ? (
+          <div className="text-center py-8 text-gray-500 text-sm font-medium">當前節點無轉發規則</div>
+        ) : (
+          rules.map((r: any, idx: number) => (
+            <motion.div 
+              layout 
+              initial={{ opacity: 0, y: 10 }} 
+              animate={{ opacity: 1, y: 0 }} 
+              key={idx} 
+              className={`bg-white dark:bg-[#111318] p-5 rounded-[24px] space-y-4 shadow-sm border transition-colors ${isEditing ? 'border-[var(--md-primary)]/40 dark:border-[var(--md-primary)]/30' : 'border-transparent'}`}
+            >
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                 <div className="space-y-1">
+                   <label className="text-xs font-bold text-gray-500 ml-1">本地端口</label>
+                   <input 
+                     value={r.listen_port} 
+                     disabled={!isEditing}
+                     onChange={e => setRules(rules.map((rule, i) => i === idx ? { ...rule, listen_port: e.target.value } : rule))} 
+                     className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] disabled:opacity-60 disabled:bg-transparent transition-all" 
+                     placeholder="例如: 8080" 
+                   />
+                 </div>
+                 <div className="space-y-1">
+                   <label className="text-xs font-bold text-gray-500 ml-1">目標 IP</label>
+                   <input 
+                     value={r.dest_ip} 
+                     disabled={!isEditing}
+                     onChange={e => setRules(rules.map((rule, i) => i === idx ? { ...rule, dest_ip: e.target.value } : rule))} 
+                     className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] disabled:opacity-60 disabled:bg-transparent transition-all" 
+                     placeholder="例如: 192.168.1.1" 
+                   />
+                 </div>
+                 <div className="space-y-1">
+                   <label className="text-xs font-bold text-gray-500 ml-1">目標端口</label>
+                   <input 
+                     value={r.dest_port} 
+                     disabled={!isEditing}
+                     onChange={e => setRules(rules.map((rule, i) => i === idx ? { ...rule, dest_port: e.target.value } : rule))} 
+                     className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] disabled:opacity-60 disabled:bg-transparent transition-all" 
+                     placeholder="例如: 80" 
+                   />
+                 </div>
               </div>
-              <motion.button whileTap={{ scale: 0.9 }} onClick={()=>{const n=[...rules];n.splice(idx,1);handleOptimisticUpdate(n)}} className="flex items-center gap-1 text-red-500 bg-red-50 dark:bg-red-900/10 px-3 py-2 rounded-xl text-sm font-bold"><Trash2 className="w-4 h-4"/> 刪除</motion.button>
-            </div>
-          </motion.div>
-        ))}
+              
+              <div className="flex justify-between items-center border-t border-gray-100 dark:border-white/5 pt-3">
+                <div className="flex items-center gap-2">
+                   <span className="text-xs font-bold text-gray-500">協議:</span>
+                   <select 
+                     value={r.protocol} 
+                     disabled={!isEditing}
+                     onChange={e => setRules(rules.map((rule, i) => i === idx ? { ...rule, protocol: e.target.value } : rule))} 
+                     className="bg-gray-50 dark:bg-[#202522] p-2 rounded-xl text-sm font-bold outline-none disabled:opacity-60 disabled:bg-transparent disabled:appearance-none cursor-pointer disabled:cursor-default"
+                   >
+                      <option value="tcp">TCP</option>
+                      <option value="udp">UDP</option>
+                      <option value="tcp,udp">TCP+UDP</option>
+                   </select>
+                </div>
+                {isEditing && (
+                  <motion.button 
+                    whileTap={{ scale: 0.9 }} 
+                    onClick={() => { const n = [...rules]; n.splice(idx, 1); setRules(n); }} 
+                    className="flex items-center gap-1 text-red-500 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/30 px-3 py-2 rounded-xl text-sm font-bold transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4"/> 刪除
+                  </motion.button>
+                )}
+              </div>
+            </motion.div>
+          ))
+        )}
       </div>
     </div>
   );
