@@ -168,7 +168,7 @@ class SystemUtils:
             else:
                 nft += f"        {p} dport {sport} dnat to {dip}:{dport}\\n"
                 
-        nft += "    }\\n"
+        nft += "    }\\n\\n"
         
         nft += "    chain postrouting {\\n"
         nft += "        type nat hook postrouting priority 100;\\n"
@@ -178,7 +178,7 @@ class SystemUtils:
             nft += f"        ip daddr {dip} masquerade\\n"
             
         nft += "    }\\n"
-        nft += "}\\n""
+        nft += "}\\n"
         
         try:
             with open("rules.nft", "w") as f: f.write(nft)
