@@ -9,6 +9,7 @@ export async function GET(req: Request) {
   const defaultPanel = host ? `${protocol}://${host}` : "";
   const panelUrl = searchParams.get("panel") || defaultPanel;
 
+  // 主要修復點：在 '[' 前後添加了空格 (例如 'if [' 而不是 'if[')
   const script = `#!/bin/bash
 # AeroNode V7.4 - Bash 語法嚴格修復版 (通過 ShellCheck)
 
@@ -53,13 +54,13 @@ fi
 
 # 依賴安裝
 install_packages() {
-    # 【已修復】: 加上了 if 和 [ 之間的空格
-    if[ -f /etc/debian_version ]; then
+    # 【已修復】: 這裡之前缺少空格 (if[ -> if [)
+    if [ -f /etc/debian_version ]; then
         apt-get update -q
         apt-get install -y -q python3 python3-pip python3-venv python3-full nftables ufw
-    elif[ -f /etc/redhat-release ]; then
+    elif [ -f /etc/redhat-release ]; then
         yum install -y python3 python3-pip nftables
-    elif[ -f /etc/alpine-release ]; then
+    elif [ -f /etc/alpine-release ]; then
         apk add python3 py3-pip nftables
     fi
 }
@@ -69,7 +70,8 @@ if ! command -v pip3 &> /dev/null || ! command -v nft &> /dev/null; then
 fi
 
 # 配置 UFW (參考原腳本邏輯，放行轉發)
-if command -v ufw &> /dev/null &&[ -f "/etc/default/ufw" ]; then
+# 【已修復】: 這裡之前缺少空格 (&&[ -> && [)
+if command -v ufw &> /dev/null && [ -f "/etc/default/ufw" ]; then
     sed -i 's/DEFAULT_FORWARD_POLICY="DROP"/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
     ufw reload > /dev/null 2>&1 || true
 fi
