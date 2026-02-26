@@ -133,10 +133,10 @@ export async function POST(req: Request) {
     if (action === "GET_RULES") return NextResponse.json(await kv.lrange(`rules:${data.nodeId}`, 0, -1) || []);
 
     if (action === "CHANGE_PASSWORD") { const newHash = hashPassword(data.newPassword); await kv.set("admin_password", newHash); return NextResponse.json({ success: true, token: newHash }); }
-    if (action === "GENERATE_2FA") { const secret = authenticator.generateSecret(); return NextResponse.json({ secret, otpauth: authenticator.keyuri("Admin", "AeroNode", secret) }); }
-    if (action === "VERIFY_AND_ENABLE_2FA") { if (authenticator.check(data.code, data.secret)) { await kv.set("totp_secret", data.secret); return NextResponse.json({ success: true }); } return NextResponse.json({ error: "Code invalid" }, { status: 400 }); }
-    if (action === "DISABLE_2FA") { await kv.del("totp_secret"); return NextResponse.json({ success: true }); }
-    if (action === "CHECK_2FA_STATUS") return NextResponse.json({ enabled: !!totpSecret });
+    //if (action === "GENERATE_2FA") { const secret = authenticator.generateSecret(); return NextResponse.json({ secret, otpauth: authenticator.keyuri("Admin", "AeroNode", secret) }); }
+    //if (action === "VERIFY_AND_ENABLE_2FA") { if (authenticator.check(data.code, data.secret)) { await kv.set("totp_secret", data.secret); return NextResponse.json({ success: true }); } return NextResponse.json({ error: "Code invalid" }, { status: 400 }); }
+    //if (action === "DISABLE_2FA") { await kv.del("totp_secret"); return NextResponse.json({ success: true }); }
+    //if (action === "CHECK_2FA_STATUS") return NextResponse.json({ enabled: !!totpSecret });
     
     if (action === "EXPORT_ALL") { const nodes = await kv.hgetall("nodes") || {}; const rules: any = {}; for (const id of Object.keys(nodes)) rules[id] = await kv.lrange(`rules:${id}`, 0, -1) || []; return NextResponse.json({ nodes, rules }); }
     if (action === "IMPORT_ALL") { const { nodes, rules } = data.backupData; await kv.del("nodes"); if (Object.keys(nodes).length > 0) await kv.hset("nodes", nodes); for (const nodeId of Object.keys(rules)) { await kv.del(`rules:${nodeId}`); if (rules[nodeId].length > 0) await kv.rpush(`rules:${nodeId}`, ...rules[nodeId]); await kv.set(`cmd:${nodeId}`, "UPDATE"); } return NextResponse.json({ success: true }); }
