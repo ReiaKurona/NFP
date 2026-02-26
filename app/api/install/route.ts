@@ -9,16 +9,14 @@ export async function GET(req: Request) {
   const defaultPanel = host ? `${protocol}://${host}` : "";
   const panelUrl = searchParams.get("panel") || defaultPanel;
 
-  // 注意：Python 代碼中的換行符 \n 必須寫成 \\n，否則在傳輸時會變成真實換行導致語法錯誤
   const script = `#!/bin/bash
-# AeroNode V6.1 - Fix Syntax Error Version
+# AeroNode V7.0 - Config Pull Mode (配置託管版)
 
 RED='\\033[0;31m'
-GREEN='\\033[0;32m'
 BLUE='\\033[0;34m'
 NC='\\033[0m'
 
-echo -e "\${BLUE}[AeroNode] 安裝 V6.1 (修復版)... \${NC}"
+echo -e "\${BLUE}[AeroNode] 安裝 V7.0 (配置鏈接版)... \${NC}"
 
 TOKEN=""
 NODE_ID=""
@@ -43,8 +41,7 @@ INSTALL_DIR="/opt/aero-agent"
 SERVICE_NAME="aero-agent"
 LOG_FILE="/var/log/aero-agent.log"
 
-# 1. 環境準備
-echo -e "\${BLUE}[1/4] 準備依賴環境...\${NC}"
+# 1. 依賴
 install_packages() {
     if [ -f /etc/debian_version ]; then
         apt-get update -q
@@ -55,14 +52,11 @@ install_packages() {
         apk add python3 py3-pip nftables
     fi
 }
-
-# 即使有 python3 也要確保有 pip 和 venv
-if ! command -v pip3 &> /dev/null || ! python3 -m venv --help &> /dev/null; then
+if ! command -v pip3 &> /dev/null || ! command -v nft &> /dev/null; then
     install_packages
 fi
 
-# 2. 虛擬環境 (解決 pip 依賴問題)
-echo -e "\${BLUE}[2/4] 構建 Python 虛擬環境...\${NC}"
+# 2. 虛擬環境
 mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
 rm -rf venv
@@ -70,10 +64,7 @@ python3 -m venv venv
 ./venv/bin/pip install --upgrade pip --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 ./venv/bin/pip install pycryptodome requests --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
-# 3. 部署 Agent 代碼
-echo -e "\${BLUE}[3/4] 寫入 Agent 核心代碼...\${NC}"
-
-# 尋找 nft 絕對路徑
+# 3. 部署代碼
 NFT_BIN=$(command -v nft)
 if [ -z "$NFT_BIN" ]; then NFT_BIN="/usr/sbin/nft"; fi
 
@@ -81,7 +72,6 @@ cat > config.json <<EOF
 { "token": "$TOKEN", "node_id": "$NODE_ID", "panel_url": "$PANEL_URL", "nft_bin": "$NFT_BIN" }
 EOF
 
-# 注意：這裡所有的 \\n 都是為了防止 JS 模板字符串將其轉為真實換行
 cat > agent.py << 'PYEOF'
 import sys, json, time, base64, urllib.request, urllib.parse, subprocess, threading, os
 from datetime import datetime
@@ -90,8 +80,7 @@ LOG_FILE = "/var/log/aero-agent.log"
 def log(msg):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        with open(LOG_FILE, "a") as f:
-            f.write(f"[{ts}] {msg}\\n")
+        with open(LOG_FILE, "a") as f: f.write(f"[{ts}] {msg}\\n")
     except: pass
     print(msg)
 
@@ -104,9 +93,10 @@ except ImportError:
 
 try:
     with open("config.json", "r") as f: CONFIG = json.load(f)
-except Exception as e:
-    log(f"CRITICAL: Config load error: {e}")
-    sys.exit(1)
+except: sys.exit(1)
+
+# 構建專屬配置下載鏈接
+CONFIG_URL = f"{CONFIG['panel_url']}/api?action=DOWNLOAD_CONFIG&node_id={CONFIG['node_id']}&token={CONFIG['token']}"
 
 class Monitor:
     def __init__(self):
@@ -124,21 +114,19 @@ class Monitor:
                     data = parts[1].split()
                     rx += int(data[0])
                     tx += int(data[8])
-        except Exception as e:
-            pass
+        except: pass
         return (rx, tx)
 
     def get_stats(self):
         try:
             with open("/proc/loadavg", "r") as f: cpu_load = f.read().split()[0]
-            
             mem_total, mem_avail = 0, 0
             with open("/proc/meminfo", "r") as f:
                 for line in f:
                     if "MemTotal" in line: mem_total = int(line.split()[1])
                     if "MemAvailable" in line: mem_avail = int(line.split()[1])
             mem_usage = int(((mem_total - mem_avail) / mem_total * 100)) if mem_total > 0 else 0
-
+            
             curr_net = self.read_net()
             curr_time = time.time()
             diff = curr_time - self.last_time
@@ -163,90 +151,88 @@ class Monitor:
                 "tx_total": f"{curr_net[1]/1073741824:.2f} GB",
                 "goroutines": threading.active_count()
             }
-        except Exception as e:
-            log(f"Stats error: {e}")
-            return {}
+        except: return {}
 
 monitor = Monitor()
 
 class SystemUtils:
     @staticmethod
     def apply_rules(rules):
-        log(f"Applying {len(rules)} rules...")
-        nft_content = "flush ruleset\\n"
-        nft_content += "table ip nat {\\n"
-        nft_content += "  chain PREROUTING { type nat hook prerouting priority -100; }\\n"
-        nft_content += "  chain POSTROUTING { type nat hook postrouting priority 100; }\\n"
-        
+        # 簡單比較 Hash 或長度，這裡為了穩定，每次都刷新
+        log(f"Syncing {len(rules)} rules...")
+        nft = "flush ruleset\\n"
+        nft += "table ip nat {\\n"
+        nft += "  chain PREROUTING { type nat hook prerouting priority -100; }\\n"
+        nft += "  chain POSTROUTING { type nat hook postrouting priority 100; }\\n"
         for r in rules:
             p = r.get("protocol", "tcp")
             sport = r["listen_port"]
             dip = r["dest_ip"]
             dport = r["dest_port"]
-            nft_content += f"  add rule nat PREROUTING {p} dport {sport} counter dnat to {dip}:{dport}\\n"
-            nft_content += f"  add rule nat POSTROUTING ip daddr {dip} {p} dport {dport} counter masquerade\\n"
-        nft_content += "}\\n"
+            nft += f"  add rule nat PREROUTING {p} dport {sport} counter dnat to {dip}:{dport}\\n"
+            nft += f"  add rule nat POSTROUTING ip daddr {dip} {p} dport {dport} counter masquerade\\n"
+        nft += "}\\n"
         
         try:
-            with open("rules.nft", "w") as f: f.write(nft_content)
-            cmd = [CONFIG.get("nft_bin", "nft"), "-f", "rules.nft"]
-            res = subprocess.run(cmd, capture_output=True, text=True)
-            if res.returncode != 0:
-                log(f"Nftables Error: {res.stderr}")
-            else:
-                log("Rules applied successfully.")
+            with open("rules.nft", "w") as f: f.write(nft)
+            subprocess.run([CONFIG.get("nft_bin", "nft"), "-f", "rules.nft"], check=True)
+            log("Rules updated successfully.")
         except Exception as e:
-            log(f"Apply rules exception: {e}")
+            log(f"Nftables Error: {e}")
 
 class CryptoUtils:
     @staticmethod
-    def decrypt(encrypted_hex, iv_hex, token):
+    def decrypt(raw_json, token):
         try:
+            obj = json.loads(raw_json)
             key = SHA256.new(token.encode('utf-8')).digest()
-            ciphertext = bytes.fromhex(encrypted_hex)
-            iv = bytes.fromhex(iv_hex)
+            ciphertext = bytes.fromhex(obj['payload'])
+            iv = bytes.fromhex(obj['iv'])
             cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
             return json.loads(cipher.decrypt_and_verify(ciphertext[:-16], ciphertext[-16:]).decode('utf-8'))
         except Exception as e:
-            log(f"Decrypt failed: {e}")
+            log(f"Decrypt Error: {e}")
             return None
 
-def fetch_config():
+def download_and_apply_config():
     try:
-        url = f"{CONFIG['panel_url']}/api"
-        data = json.dumps({"action": "FETCH_CONFIG", "nodeId": CONFIG["node_id"], "token": CONFIG["token"]}).encode()
-        req = urllib.request.Request(url, data=data, method="POST", headers={'Content-Type': 'application/json'})
+        req = urllib.request.Request(CONFIG_URL, headers={'User-Agent': 'AeroAgent/7.0'})
         with urllib.request.urlopen(req, timeout=15) as resp:
-            raw = json.loads(resp.read().decode())
-            decrypted = CryptoUtils.decrypt(raw['payload'], raw['iv'], CONFIG['token'])
-            if decrypted: SystemUtils.apply_rules(decrypted['rules'])
+            if resp.status == 200:
+                raw = resp.read().decode()
+                data = CryptoUtils.decrypt(raw, CONFIG['token'])
+                if data and 'rules' in data:
+                    SystemUtils.apply_rules(data['rules'])
     except Exception as e:
-        log(f"Fetch config failed: {e}")
+        log(f"Config download failed: {e}")
 
 def loop():
-    log("Agent loop started.")
+    log("Agent started.")
+    # 啟動時先拉取一次配置
+    download_and_apply_config()
+    
+    last_sync = time.time()
+    
     while True:
         interval = 30
         try:
-            payload = {
-                "nodeId": CONFIG["node_id"], "token": CONFIG["token"],
-                "stats": monitor.get_stats()
-            }
+            # 1. 發送心跳
+            payload = { "nodeId": CONFIG["node_id"], "token": CONFIG["token"], "stats": monitor.get_stats() }
             b64 = base64.b64encode(json.dumps(payload).encode()).decode()
             url = f"{CONFIG['panel_url']}/api?action=HEARTBEAT&data={urllib.parse.quote(b64)}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'AeroAgent/7.0'})
             
-            req = urllib.request.Request(url, headers={'User-Agent': 'AeroAgent/6.1'})
             with urllib.request.urlopen(req, timeout=15) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode())
                     if data.get("interval"): interval = data["interval"]
-                    if data.get("has_cmd"): fetch_config()
-        except urllib.error.HTTPError as e:
-            log(f"HTTP Error {e.code}: {e.reason}")
-        except urllib.error.URLError as e:
-            log(f"Connection Error: {e.reason}")
+                    # 2. 如果面板通知有更新，或者距離上次更新超過 60 秒，則拉取配置
+                    if data.get("has_cmd") or (time.time() - last_sync > 60):
+                        download_and_apply_config()
+                        last_sync = time.time()
+                        
         except Exception as e:
-            log(f"Unexpected Error: {e}")
+            log(f"Heartbeat Error: {e}")
         
         time.sleep(interval)
 
@@ -257,14 +243,11 @@ if __name__ == "__main__":
     loop()
 PYEOF
 
-# 4. 創建服務 (強制 Root)
-echo -e "\${BLUE}[4/4] 註冊 Root 服務...\${NC}"
-
+# 4. 服務
 VENV_PYTHON="$INSTALL_DIR/venv/bin/python"
-
 cat > /etc/systemd/system/$SERVICE_NAME.service <<EOF
 [Unit]
-Description=AeroNode Root Agent
+Description=AeroNode Agent
 After=network.target
 [Service]
 User=root
@@ -281,14 +264,7 @@ EOF
 systemctl daemon-reload
 systemctl enable $SERVICE_NAME
 systemctl restart $SERVICE_NAME
-
-sleep 2
-if systemctl is-active --quiet $SERVICE_NAME; then
-    echo -e "\n\${GREEN}✅ 安裝成功！Root Agent 正在運行。\${NC}"
-else
-    echo -e "\n\${RED}❌ 啟動失敗！請查看錯誤日誌：\${NC}"
-    journalctl -u $SERVICE_NAME -n 10 --no-pager
-fi
+echo -e "\\n\${GREEN}✅ Agent V7.0 安裝成功！日誌: $LOG_FILE \${NC}"
 `;
   return new NextResponse(script, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 }
