@@ -47,9 +47,9 @@ echo -e "\${BLUE}[1/3] 準備系統環境...\${NC}"
 if ! command -v python3 &> /dev/null || ! command -v nft &> /dev/null; then
     if [ -f /etc/debian_version ]; then
         apt-get update -q && apt-get install -y -q python3 nftables
-    elif [ -f /etc/redhat-release ]; then
+    elif[ -f /etc/redhat-release ]; then
         yum install -y python3 nftables
-    elif [ -f /etc/alpine-release ]; then
+    elif[ -f /etc/alpine-release ]; then
         apk add python3 nftables
     fi
 fi
@@ -61,7 +61,7 @@ mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
 
 NFT_BIN=$(command -v nft)
-if [ -z "$NFT_BIN" ]; then NFT_BIN="/usr/sbin/nft"; fi
+if[ -z "$NFT_BIN" ]; then NFT_BIN="/usr/sbin/nft"; fi
 
 # 2. 部署代碼
 echo -e "\${BLUE}[2/3] 寫入 Agent 核心代碼...\${NC}"
@@ -142,18 +142,18 @@ class Monitor:
         except: return {}
 
 monitor = Monitor()
-
+#nftables
 class SystemUtils:
     @staticmethod
     def apply_rules(rules):
         log(f"Syncing {len(rules)} rules...")
         
         # 嚴謹的 Nftables 配置模板
-        nft = "add table ip nat\\n"
-        nft += "flush table ip nat\\n"
-        nft += "table ip nat {\\n"
-        nft += "  chain PREROUTING { type nat hook prerouting priority dstnat; policy accept; }\\n"
-        nft += "  chain POSTROUTING { type nat hook postrouting priority srcnat; policy accept; }\\n"
+        nft = "add table ip nat\n"
+        nft += "flush table ip nat\n"
+        nft += "table ip nat {\n"
+        nft += "  chain PREROUTING { type nat hook prerouting priority dstnat; policy accept; }\n"
+        nft += "  chain POSTROUTING { type nat hook postrouting priority srcnat; policy accept; }\n"
         
         for r in rules:
             raw_proto = r.get("protocol", "tcp")
@@ -163,9 +163,9 @@ class SystemUtils:
             dport = r["dest_port"]
             
             for p in protos:
-                nft += f"  add rule ip nat PREROUTING {p} dport {sport} counter dnat to {dip}:{dport}\\n"
+                nft += f"  add rule ip nat PREROUTING {p} dport {sport} counter dnat to {dip}:{dport}\n"
                 nft += f"  add rule ip nat POSTROUTING ip daddr {dip} {p} dport {dport} counter masquerade\\n"
-        nft += "}\\n"
+        nft += "}\n"
         
         try:
             with open("rules.nft", "w") as f: f.write(nft)
