@@ -354,39 +354,54 @@ function NodesView({ nodes, api, fetchAllData }: any) {
 }
 //規則編輯頁面
 function RulesView({ nodes, allRules, api, fetchAllData }: any) {
-  const[selected, setSelected] = useState<string>(nodes[0]?.id || "");
+  const [selected, setSelected] = useState<string>(nodes[0]?.id || "");
   const [rules, setRules] = useState<any[]>([]);
   const [isSaving, setIsSaving] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
+  
+  // 記錄當前正在編輯的規則。null 表示未編輯，index: -1 表示新增
+  const [editing, setEditing] = useState<{ index: number; rule: any } | null>(null);
+  const[isSelectOpen, setIsSelectOpen] = useState(false);
 
   useEffect(() => {
-    if (selected) {
-      // 使用深拷貝避免直接修改到 allRules 中的原始數據
-      setRules(allRules[selected] ? allRules[selected].map((r: any) => ({ ...r })) :[]);
-      setIsEditing(false); // 切換節點時退出編輯模式
-    }
-  },[selected, allRules]);
+    if (selected) setRules(allRules[selected] || []);
+  }, [selected, allRules]);
 
   const handleSave = async () => {
+    if (!editing) return;
     setIsSaving(true);
+    
+    const newRules = [...rules];
+    if (editing.index === -1) {
+      newRules.push(editing.rule);
+    } else {
+      newRules[editing.index] = editing.rule;
+    }
+
     try {
-      await api("SAVE_RULES", { nodeId: selected, rules });
-      await fetchAllData();
-      setIsEditing(false);
-    } catch (error) {
-      console.error("保存失敗", error);
+      await api("SAVE_RULES", { nodeId: selected, rules: newRules });
+      setRules(newRules);
+      fetchAllData();
+      setEditing(null);
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleCancel = () => {
-    // 恢復為修改前的規則
-    setRules(allRules[selected] ? allRules[selected].map((r: any) => ({ ...r })) :[]);
-    setIsEditing(false);
+  const handleDelete = async (idx: number) => {
+    const newRules = [...rules];
+    newRules.splice(idx, 1);
+    setRules(newRules);
+    await api("SAVE_RULES", { nodeId: selected, rules: newRules });
+    fetchAllData();
   };
 
   if (nodes.length === 0) return <div className="text-center py-10">請先添加節點</div>;
+
+  const protocolOptions =[
+    { label: "TCP", value: "tcp" },
+    { label: "UDP", value: "udp" },
+    { label: "TCP+UDP", value: "tcp,udp" },
+  ];
 
   return (
     <div className="space-y-6">
@@ -395,137 +410,203 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
           <motion.button 
             whileTap={{ scale: 0.95 }} 
             key={n.id} 
-            onClick={() => !isSaving && setSelected(n.id)} 
-            className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap ${selected === n.id ? 'bg-[var(--md-primary)] text-[var(--md-on-primary)] shadow-md' : 'bg-[#F0F4EF] dark:bg-[#202522] text-gray-600 dark:text-gray-300'}`}
+            onClick={() => setSelected(n.id)} 
+            className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap transition-colors ${selected === n.id ? 'bg-[var(--md-primary)] text-[var(--md-on-primary)]' : 'bg-[#F0F4EF] dark:bg-[#202522]'}`}
           >
             {n.name}
           </motion.button>
         ))}
       </div>
 
-      <div className="bg-[#F0F4EF] dark:bg-[#202522] p-5 rounded-[32px] space-y-4">
+      <div className="bg-[#F0F4EF] dark:bg-[#202522] p-5 rounded-[32px] space-y-4 relative">
         <div className="flex justify-between items-center px-2">
           <span className="font-bold text-lg">轉發規則</span>
-          <div className="flex items-center gap-2">
-            {!isEditing ? (
-              <motion.button 
-                whileTap={{ scale: 0.9 }} 
-                onClick={() => setIsEditing(true)} 
-                className="text-[var(--md-primary)] font-bold bg-[var(--md-primary-container)] px-5 py-2 rounded-full text-sm shadow-sm"
+          <motion.button 
+            whileTap={{ scale: 0.9 }} 
+            onClick={() => setEditing({ index: -1, rule: { listen_port: "", dest_ip: "", dest_port: "", protocol: "tcp" } })} 
+            className="text-[var(--md-primary)] font-bold bg-[var(--md-primary-container)] px-5 py-2.5 rounded-full text-sm flex items-center gap-1"
+          >
+            <span className="text-lg leading-none">+</span> 添加規則
+          </motion.button>
+        </div>
+        
+        <div className="space-y-3">
+          <AnimatePresence>
+            {rules.map((r: any, idx: number) => (
+              <motion.div 
+                layout 
+                initial={{ opacity: 0, y: 10 }} 
+                animate={{ opacity: 1, y: 0 }} 
+                exit={{ opacity: 0, scale: 0.95 }}
+                key={idx} 
+                className="bg-white dark:bg-[#111318] p-5 rounded-[24px] shadow-sm border border-gray-100 dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
               >
-                編輯規則
-              </motion.button>
-            ) : (
-              <>
-                <motion.button 
-                  whileTap={{ scale: 0.9 }} 
-                  onClick={handleCancel} 
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-xl font-mono font-black">{r.listen_port}</span>
+                    <span className="text-gray-400">→</span>
+                    <span className="text-lg font-mono font-bold text-gray-700 dark:text-gray-300">{r.dest_ip}:{r.dest_port}</span>
+                  </div>
+                  <div className="inline-flex items-center px-2.5 py-1 rounded-lg bg-[#F0F4EF] dark:bg-[#202522] text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider">
+                    {r.protocol === "tcp,udp" ? "TCP+UDP" : r.protocol}
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  <motion.button 
+                    whileTap={{ scale: 0.9 }} 
+                    onClick={() => setEditing({ index: idx, rule: { ...r } })} 
+                    className="p-3 bg-[var(--md-primary-container)] text-[var(--md-primary)] rounded-2xl"
+                  >
+                    <Edit2 className="w-5 h-5" />
+                  </motion.button>
+                  <motion.button 
+                    whileTap={{ scale: 0.9 }} 
+                    onClick={() => handleDelete(idx)} 
+                    className="p-3 bg-red-50 text-red-500 dark:bg-red-900/20 dark:text-red-400 rounded-2xl"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </motion.button>
+                </div>
+              </motion.div>
+            ))}
+            {rules.length === 0 && (
+              <div className="text-center py-8 text-gray-400 text-sm font-bold">
+                暫無規則，請點擊上方按鈕添加
+              </div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+
+      {/* MD3 彈出編輯視窗 */}
+      <AnimatePresence>
+        {editing && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* 背景遮罩 */}
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              onClick={() => !isSaving && setEditing(null)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+              animate={{ opacity: 1, scale: 1, y: 0 }} 
+              exit={{ opacity: 0, scale: 0.95, y: 20 }} 
+              className="relative w-full max-w-md bg-white dark:bg-[#111318] rounded-[32px] shadow-2xl overflow-hidden flex flex-col"
+            >
+              <div className="p-6 space-y-6">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-2xl font-bold">{editing.index === -1 ? "添加規則" : "編輯規則"}</h3>
+                  <button 
+                    onClick={() => !isSaving && setEditing(null)} 
+                    className="p-2 bg-gray-100 dark:bg-white/10 rounded-full hover:scale-105 transition-transform"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-bold text-gray-500 ml-1">本地端口 (如 8080 或 1000-2000)</label>
+                    <input 
+                      value={editing.rule.listen_port} 
+                      onChange={e => setEditing({ ...editing, rule: { ...editing.rule, listen_port: e.target.value } })} 
+                      className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow" 
+                      placeholder="Port" 
+                    />
+                  </div>
+                  
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-bold text-gray-500 ml-1">目標 IP</label>
+                    <input 
+                      value={editing.rule.dest_ip} 
+                      onChange={e => setEditing({ ...editing, rule: { ...editing.rule, dest_ip: e.target.value } })} 
+                      className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow" 
+                      placeholder="IP" 
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-bold text-gray-500 ml-1">目標端口 (對應本地)</label>
+                    <input 
+                      value={editing.rule.dest_port} 
+                      onChange={e => setEditing({ ...editing, rule: { ...editing.rule, dest_port: e.target.value } })} 
+                      className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow" 
+                      placeholder="Port" 
+                    />
+                  </div>
+
+                  {/* 自定義 MD3 選擇菜單 */}
+                  <div className="space-y-1.5 relative">
+                    <label className="text-sm font-bold text-gray-500 ml-1">協議</label>
+                    <div 
+                      onClick={() => setIsSelectOpen(!isSelectOpen)}
+                      className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] text-sm font-bold flex justify-between items-center cursor-pointer outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow"
+                    >
+                      <span>{protocolOptions.find(o => o.value === editing.rule.protocol)?.label || "選擇協議"}</span>
+                      <motion.div animate={{ rotate: isSelectOpen ? 180 : 0 }}>
+                        <ChevronDown className="w-5 h-5 text-gray-500" />
+                      </motion.div>
+                    </div>
+                    
+                    <AnimatePresence>
+                      {isSelectOpen && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: -10 }} 
+                          animate={{ opacity: 1, y: 0 }} 
+                          exit={{ opacity: 0, y: -10 }} 
+                          className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-[#2a2f2c] rounded-[20px] shadow-xl border border-gray-100 dark:border-white/5 overflow-hidden z-20"
+                        >
+                          {protocolOptions.map(o => (
+                            <div 
+                              key={o.value} 
+                              onClick={() => {
+                                setEditing({ ...editing, rule: { ...editing.rule, protocol: o.value } });
+                                setIsSelectOpen(false);
+                              }} 
+                              className={`p-4 hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer font-bold text-sm transition-colors ${editing.rule.protocol === o.value ? 'text-[var(--md-primary)] bg-[var(--md-primary-container)]' : ''}`}
+                            >
+                              {o.label}
+                            </div>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 pt-0 flex gap-3">
+                <button 
+                  onClick={() => setEditing(null)} 
                   disabled={isSaving}
-                  className="text-gray-600 dark:text-gray-300 font-bold px-4 py-2 rounded-full text-sm hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50"
+                  className="flex-1 py-4 rounded-full font-bold bg-[#F0F4EF] dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
                 >
                   取消
-                </motion.button>
-                <motion.button 
-                  whileTap={{ scale: 0.9 }} 
-                  onClick={() => setRules([...rules, { listen_port: "", dest_ip: "", dest_port: "", protocol: "tcp" }])} 
-                  disabled={isSaving}
-                  className="text-[var(--md-primary)] font-bold bg-[var(--md-primary-container)] px-4 py-2 rounded-full text-sm disabled:opacity-50"
-                >
-                  + 添加規則
-                </motion.button>
-                <motion.button 
-                  whileTap={{ scale: 0.9 }} 
+                </button>
+                <button 
                   onClick={handleSave} 
                   disabled={isSaving}
-                  className="flex items-center gap-2 text-[var(--md-on-primary)] font-bold bg-[var(--md-primary)] px-5 py-2 rounded-full text-sm shadow-md disabled:opacity-70 transition-all"
+                  className="flex-1 py-4 rounded-full font-bold bg-[var(--md-primary)] text-[var(--md-on-primary)] hover:opacity-90 transition-opacity flex justify-center items-center gap-2 disabled:opacity-70"
                 >
                   {isSaving ? (
                     <>
-                      <svg className="animate-spin h-4 w-4 text-[var(--md-on-primary)]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      保存中...
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>保存中...</span>
                     </>
-                  ) : "保存"}
-                </motion.button>
-              </>
-            )}
-          </div>
-        </div>
-        
-        {rules.length === 0 && !isEditing ? (
-          <div className="text-center py-8 text-gray-500 text-sm font-medium">當前節點無轉發規則</div>
-        ) : (
-          rules.map((r: any, idx: number) => (
-            <motion.div 
-              layout 
-              initial={{ opacity: 0, y: 10 }} 
-              animate={{ opacity: 1, y: 0 }} 
-              key={idx} 
-              className={`bg-white dark:bg-[#111318] p-5 rounded-[24px] space-y-4 shadow-sm border transition-colors ${isEditing ? 'border-[var(--md-primary)]/40 dark:border-[var(--md-primary)]/30' : 'border-transparent'}`}
-            >
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                 <div className="space-y-1">
-                   <label className="text-xs font-bold text-gray-500 ml-1">本地端口</label>
-                   <input 
-                     value={r.listen_port} 
-                     disabled={!isEditing}
-                     onChange={e => setRules(rules.map((rule, i) => i === idx ? { ...rule, listen_port: e.target.value } : rule))} 
-                     className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] disabled:opacity-60 disabled:bg-transparent transition-all" 
-                     placeholder="例如: 8080" 
-                   />
-                 </div>
-                 <div className="space-y-1">
-                   <label className="text-xs font-bold text-gray-500 ml-1">目標 IP</label>
-                   <input 
-                     value={r.dest_ip} 
-                     disabled={!isEditing}
-                     onChange={e => setRules(rules.map((rule, i) => i === idx ? { ...rule, dest_ip: e.target.value } : rule))} 
-                     className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] disabled:opacity-60 disabled:bg-transparent transition-all" 
-                     placeholder="例如: 192.168.1.1" 
-                   />
-                 </div>
-                 <div className="space-y-1">
-                   <label className="text-xs font-bold text-gray-500 ml-1">目標端口</label>
-                   <input 
-                     value={r.dest_port} 
-                     disabled={!isEditing}
-                     onChange={e => setRules(rules.map((rule, i) => i === idx ? { ...rule, dest_port: e.target.value } : rule))} 
-                     className="w-full bg-gray-50 dark:bg-[#202522] p-3 rounded-xl font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] disabled:opacity-60 disabled:bg-transparent transition-all" 
-                     placeholder="例如: 80" 
-                   />
-                 </div>
-              </div>
-              
-              <div className="flex justify-between items-center border-t border-gray-100 dark:border-white/5 pt-3">
-                <div className="flex items-center gap-2">
-                   <span className="text-xs font-bold text-gray-500">協議:</span>
-                   <select 
-                     value={r.protocol} 
-                     disabled={!isEditing}
-                     onChange={e => setRules(rules.map((rule, i) => i === idx ? { ...rule, protocol: e.target.value } : rule))} 
-                     className="bg-gray-50 dark:bg-[#202522] p-2 rounded-xl text-sm font-bold outline-none disabled:opacity-60 disabled:bg-transparent disabled:appearance-none cursor-pointer disabled:cursor-default"
-                   >
-                      <option value="tcp">TCP</option>
-                      <option value="udp">UDP</option>
-                      <option value="tcp,udp">TCP+UDP</option>
-                   </select>
-                </div>
-                {isEditing && (
-                  <motion.button 
-                    whileTap={{ scale: 0.9 }} 
-                    onClick={() => { const n = [...rules]; n.splice(idx, 1); setRules(n); }} 
-                    className="flex items-center gap-1 text-red-500 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/30 px-3 py-2 rounded-xl text-sm font-bold transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4"/> 刪除
-                  </motion.button>
-                )}
+                  ) : (
+                    <span>保存</span>
+                  )}
+                </button>
               </div>
             </motion.div>
-          ))
+          </div>
         )}
-      </div>
+      </AnimatePresence>
     </div>
   );
 }
