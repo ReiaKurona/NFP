@@ -33,7 +33,7 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-if [ -z "$TOKEN" ] || [ -z "$NODE_ID" ]; then
+if [ -z "$TOKEN" ] ||[ -z "$NODE_ID" ]; then
     echo -e "\${RED}錯誤: 參數缺失。\${NC}"
     exit 1
 fi
@@ -45,11 +45,11 @@ LOG_FILE="/var/log/aero-agent.log"
 # 1. 系統組件檢查
 echo -e "\${BLUE}[1/3] 準備系統環境...\${NC}"
 if ! command -v python3 &> /dev/null || ! command -v nft &> /dev/null; then
-    if[ -f /etc/debian_version ]; then
+    if [ -f /etc/debian_version ]; then
         apt-get update -q && apt-get install -y -q python3 nftables
-    elif [ -f /etc/redhat-release ]; then
+    elif[ -f /etc/redhat-release ]; then
         yum install -y python3 nftables
-    elif [ -f /etc/alpine-release ]; then
+    elif[ -f /etc/alpine-release ]; then
         apk add python3 nftables
     fi
 fi
@@ -61,7 +61,7 @@ mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
 
 NFT_BIN=$(command -v nft)
-if [ -z "$NFT_BIN" ]; then NFT_BIN="/usr/sbin/nft"; fi
+if[ -z "$NFT_BIN" ]; then NFT_BIN="/usr/sbin/nft"; fi
 
 # 2. 部署代碼
 echo -e "\${BLUE}[2/3] 寫入 Agent 核心代碼...\${NC}"
