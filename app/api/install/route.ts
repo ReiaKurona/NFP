@@ -149,23 +149,36 @@ class SystemUtils:
         log(f"Syncing {len(rules)} rules...")
         
         # 嚴謹的 Nftables 配置模板
-        nft = "add table ip nat\n"
-        nft += "flush table ip nat\n"
-        nft += "table ip nat {\n"
-        nft += "  chain PREROUTING { type nat hook prerouting priority dstnat; policy accept; }\n"
-        nft += "  chain POSTROUTING { type nat hook postrouting priority srcnat; policy accept; }\n"
+        nft = "table ip aeronode { }\\n"
+        nft += "flush table ip aeronode\\n\\n"
+        
+        nft += "table ip aeronode {\\n"
+        nft += "    chain prerouting {\\n"
+        nft += "        type nat hook prerouting priority -100;\\n"
         
         for r in rules:
-            raw_proto = r.get("protocol", "tcp")
-            protos = ['tcp', 'udp'] if raw_proto == 'tcp,udp' else [raw_proto]
+            p = r.get("protocol", "tcp")
             sport = r["listen_port"]
             dip = r["dest_ip"]
             dport = r["dest_port"]
             
-            for p in protos:
-                nft += f"  add rule ip nat PREROUTING {p} dport {sport} counter dnat to {dip}:{dport}\n"
-                nft += f"  add rule ip nat POSTROUTING ip daddr {dip} {p} dport {dport} counter masquerade\\n"
-        nft += "}\n"
+            if p == "tcp,udp" or p == "tcp+udp":
+                nft += f"        tcp dport {sport} dnat to {dip}:{dport}\\n"
+                nft += f"        udp dport {sport} dnat to {dip}:{dport}\\n"
+            else:
+                nft += f"        {p} dport {sport} dnat to {dip}:{dport}\\n"
+                
+        nft += "    }\\n\\n"
+        
+        nft += "    chain postrouting {\\n"
+        nft += "        type nat hook postrouting priority 100;\\n"
+        
+        target_ips = set(r["dest_ip"] for r in rules)
+        for dip in target_ips:
+            nft += f"        ip daddr {dip} masquerade\\n"
+            
+        nft += "    }\\n"
+        nft += "}\\n""
         
         try:
             with open("rules.nft", "w") as f: f.write(nft)
