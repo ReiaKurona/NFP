@@ -9,15 +9,14 @@ export async function GET(req: Request) {
   const defaultPanel = host ? `${protocol}://${host}` : "";
   const panelUrl = searchParams.get("panel") || defaultPanel;
 
-  // 注意：Python 代碼中的換行符必須寫成 \\n
   const script = `#!/bin/bash
-# AeroNode V7.1 - 完美匹配自定義腳本邏輯版
+# AeroNode V7.2 - Bash 語法修復版
 
 RED='\\033[0;31m'
 BLUE='\\033[0;34m'
 NC='\\033[0m'
 
-echo -e "\${BLUE}[AeroNode] 安裝 V7.1 (Nftables 原生語法版)... \${NC}"
+echo -e "\${BLUE}[AeroNode] 安裝 V7.2 (Nftables 原生語法版)... \${NC}"
 
 TOKEN=""
 NODE_ID=""
@@ -33,7 +32,8 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-if [ -z "$TOKEN" ] ||[ -z "$NODE_ID" ]; then
+# 修復: 加上空格[ -z ... ]
+if [ -z "$TOKEN" ] || [ -z "$NODE_ID" ]; then
     echo -e "\${RED}錯誤: 參數缺失。\${NC}"
     exit 1
 fi
@@ -53,18 +53,23 @@ fi
 
 # 依賴安裝
 install_packages() {
-    if[ -f /etc/debian_version ]; then
+    # 修復: 加上空格 if [ ... ] 和 elif [ ... ]
+    if [ -f /etc/debian_version ]; then
         apt-get update -q
         apt-get install -y -q python3 python3-pip python3-venv python3-full nftables ufw
-    elif[ -f /etc/redhat-release ]; then
+    elif [ -f /etc/redhat-release ]; then
         yum install -y python3 python3-pip nftables
+    elif [ -f /etc/alpine-release ]; then
+        apk add python3 py3-pip nftables
     fi
 }
+
 if ! command -v pip3 &> /dev/null || ! command -v nft &> /dev/null; then
     install_packages
 fi
 
 # 配置 UFW (參考原腳本邏輯，放行轉發)
+# 修復: 加上空格 && [ -f ... ]
 if command -v ufw &> /dev/null &&[ -f "/etc/default/ufw" ]; then
     sed -i 's/DEFAULT_FORWARD_POLICY="DROP"/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
     ufw reload > /dev/null 2>&1 || true
@@ -82,6 +87,7 @@ python3 -m venv venv
 # 3. 部署代碼
 echo -e "\${BLUE}[3/4] 寫入 Agent 核心代碼...\${NC}"
 NFT_BIN=$(command -v nft)
+# 修復: 加上空格 if [ -z ... ]
 if[ -z "$NFT_BIN" ]; then NFT_BIN="/usr/sbin/nft"; fi
 
 cat > config.json <<EOF
@@ -96,7 +102,7 @@ LOG_FILE = "/var/log/aero-agent.log"
 def log(msg):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        with open(LOG_FILE, "a") as f: f.write(f"[{ts}] {msg}\\n")
+        with open(LOG_FILE, "a") as f: f.write(f"[{ts}] {msg}\n")
     except: pass
     print(msg)
 
@@ -177,12 +183,12 @@ class SystemUtils:
         log(f"Syncing {len(rules)} rules...")
         
         # 使用專屬表 aeronode，避免干擾系統其他規則
-        nft = "table ip aeronode\\n"
-        nft += "flush table ip aeronode\\n\\n"
+        nft = "table ip aeronode\n"
+        nft += "flush table ip aeronode\n\n"
         
-        nft += "table ip aeronode {\\n"
-        nft += "    chain prerouting {\\n"
-        nft += "        type nat hook prerouting priority -100;\\n"
+        nft += "table ip aeronode {\n"
+        nft += "    chain prerouting {\n"
+        nft += "        type nat hook prerouting priority -100;\n"
         
         # 寫入 DNAT 轉發規則
         for r in rules:
@@ -192,23 +198,23 @@ class SystemUtils:
             dport = r["dest_port"]
             
             if p == "tcp,udp" or p == "tcp+udp":
-                nft += f"        tcp dport {sport} dnat to {dip}:{dport}\\n"
-                nft += f"        udp dport {sport} dnat to {dip}:{dport}\\n"
+                nft += f"        tcp dport {sport} dnat to {dip}:{dport}\n"
+                nft += f"        udp dport {sport} dnat to {dip}:{dport}\n"
             else:
-                nft += f"        {p} dport {sport} dnat to {dip}:{dport}\\n"
+                nft += f"        {p} dport {sport} dnat to {dip}:{dport}\n"
                 
-        nft += "    }\\n\\n"
+        nft += "    }\n\n"
         
-        nft += "    chain postrouting {\\n"
-        nft += "        type nat hook postrouting priority 100;\\n"
+        nft += "    chain postrouting {\n"
+        nft += "        type nat hook postrouting priority 100;\n"
         
         # 寫入 Masquerade 規則 (同 IP 去重)
         target_ips = set(r["dest_ip"] for r in rules)
         for dip in target_ips:
-            nft += f"        ip daddr {dip} masquerade\\n"
+            nft += f"        ip daddr {dip} masquerade\n"
             
-        nft += "    }\\n"
-        nft += "}\\n"
+        nft += "    }\n"
+        nft += "}\n"
         
         try:
             with open("rules.nft", "w") as f: f.write(nft)
@@ -236,7 +242,7 @@ class CryptoUtils:
 
 def download_and_apply_config():
     try:
-        req = urllib.request.Request(CONFIG_URL, headers={'User-Agent': 'AeroAgent/7.1'})
+        req = urllib.request.Request(CONFIG_URL, headers={'User-Agent': 'AeroAgent/7.2'})
         with urllib.request.urlopen(req, timeout=15) as resp:
             if resp.status == 200:
                 raw = resp.read().decode()
@@ -257,7 +263,7 @@ def loop():
             payload = { "nodeId": CONFIG["node_id"], "token": CONFIG["token"], "stats": monitor.get_stats() }
             b64 = base64.b64encode(json.dumps(payload).encode()).decode()
             url = f"{CONFIG['panel_url']}/api?action=HEARTBEAT&data={urllib.parse.quote(b64)}"
-            req = urllib.request.Request(url, headers={'User-Agent': 'AeroAgent/7.1'})
+            req = urllib.request.Request(url, headers={'User-Agent': 'AeroAgent/7.2'})
             
             with urllib.request.urlopen(req, timeout=15) as resp:
                 if resp.status == 200:
@@ -267,7 +273,7 @@ def loop():
                         download_and_apply_config()
                         last_sync = time.time()
         except Exception as e:
-            pass # 忽略網絡波動日誌，防止塞滿磁盤
+            pass
         
         time.sleep(interval)
 
