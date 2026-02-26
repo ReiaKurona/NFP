@@ -9,16 +9,15 @@ export async function GET(req: Request) {
   const defaultPanel = host ? `${protocol}://${host}` : "";
   const panelUrl = searchParams.get("panel") || defaultPanel;
 
-  // 主要修復點：在 '[' 前後添加了空格 (例如 'if [' 而不是 'if[')
   const script = `#!/bin/bash
-# AeroNode V7.4 - Bash 語法嚴格修復版 (通過 ShellCheck)
+# AeroNode V8.0 - 免依賴訂閱版 (最穩定架構)
 
 RED='\\033[0;31m'
-BLUE='\\033[0;34m'
 GREEN='\\033[0;32m'
+BLUE='\\033[0;34m'
 NC='\\033[0m'
 
-echo -e "\${BLUE}[AeroNode] 安裝 V7.4 (語法終極修復版)... \${NC}"
+echo -e "\${BLUE}[AeroNode] 開始安裝 V8.0 (免加密依賴版)... \${NC}"
 
 TOKEN=""
 NODE_ID=""
@@ -43,52 +42,29 @@ INSTALL_DIR="/opt/aero-agent"
 SERVICE_NAME="aero-agent"
 LOG_FILE="/var/log/aero-agent.log"
 
-# 1. 系統環境與防火牆優化
-echo -e "\${BLUE}[1/4] 優化系統網絡與防火牆...\${NC}"
-
-# 啟用 IP 轉發
-if ! grep -q "net.ipv4.ip_forward = 1" /etc/sysctl.conf; then
-    echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
-    sysctl -p > /dev/null 2>&1
-fi
-
-# 依賴安裝
-install_packages() {
-    # 【已修復】: 這裡之前缺少空格 (if[ -> if [)
-    if [ -f /etc/debian_version ]; then
-        apt-get update -q
-        apt-get install -y -q python3 python3-pip python3-venv python3-full nftables ufw
+# 1. 系統組件檢查
+echo -e "\${BLUE}[1/3] 準備系統環境...\${NC}"
+if ! command -v python3 &> /dev/null || ! command -v nft &> /dev/null; then
+    if[ -f /etc/debian_version ]; then
+        apt-get update -q && apt-get install -y -q python3 nftables
     elif [ -f /etc/redhat-release ]; then
-        yum install -y python3 python3-pip nftables
+        yum install -y python3 nftables
     elif [ -f /etc/alpine-release ]; then
-        apk add python3 py3-pip nftables
+        apk add python3 nftables
     fi
-}
-
-if ! command -v pip3 &> /dev/null || ! command -v nft &> /dev/null; then
-    install_packages
 fi
 
-# 配置 UFW (參考原腳本邏輯，放行轉發)
-# 【已修復】: 這裡之前缺少空格 (&&[ -> && [)
-if command -v ufw &> /dev/null && [ -f "/etc/default/ufw" ]; then
-    sed -i 's/DEFAULT_FORWARD_POLICY="DROP"/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
-    ufw reload > /dev/null 2>&1 || true
-fi
+# 移除舊的 venv (現在不需要了，直接用系統 python3)
+rm -rf $INSTALL_DIR/venv
 
-# 2. 虛擬環境
-echo -e "\${BLUE}[2/4] 構建 Python 虛擬環境...\${NC}"
 mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
-rm -rf venv
-python3 -m venv venv
-./venv/bin/pip install --upgrade pip --index-url https://pypi.tuna.tsinghua.edu.cn/simple > /dev/null 2>&1
-./venv/bin/pip install pycryptodome requests --index-url https://pypi.tuna.tsinghua.edu.cn/simple > /dev/null 2>&1
 
-# 3. 部署代碼
-echo -e "\${BLUE}[3/4] 寫入 Agent 核心代碼...\${NC}"
 NFT_BIN=$(command -v nft)
 if [ -z "$NFT_BIN" ]; then NFT_BIN="/usr/sbin/nft"; fi
+
+# 2. 部署代碼
+echo -e "\${BLUE}[2/3] 寫入 Agent 核心代碼...\${NC}"
 
 cat > config.json <<EOF
 { "token": "$TOKEN", "node_id": "$NODE_ID", "panel_url": "$PANEL_URL", "nft_bin": "$NFT_BIN" }
@@ -107,16 +83,10 @@ def log(msg):
     print(msg)
 
 try:
-    from Crypto.Cipher import AES
-    from Crypto.Hash import SHA256
-except ImportError:
-    log("CRITICAL: PyCryptodome import failed")
-    sys.exit(1)
-
-try:
     with open("config.json", "r") as f: CONFIG = json.load(f)
 except: sys.exit(1)
 
+# 訂閱式配置下載鏈接
 CONFIG_URL = f"{CONFIG['panel_url']}/api?action=DOWNLOAD_CONFIG&node_id={CONFIG['node_id']}&token={CONFIG['token']}"
 
 class Monitor:
@@ -164,12 +134,9 @@ class Monitor:
                 else: return f"{b/1048576:.1f} MB/s"
 
             return {
-                "cpu_load": cpu_load,
-                "ram_usage": str(mem_usage),
-                "rx_speed": fmt(rx_spd),
-                "tx_speed": fmt(tx_spd),
-                "rx_total": f"{curr_net[0]/1073741824:.2f} GB",
-                "tx_total": f"{curr_net[1]/1073741824:.2f} GB",
+                "cpu_load": cpu_load, "ram_usage": str(mem_usage),
+                "rx_speed": fmt(rx_spd), "tx_speed": fmt(tx_spd),
+                "rx_total": f"{curr_net[0]/1073741824:.2f} GB", "tx_total": f"{curr_net[1]/1073741824:.2f} GB",
                 "goroutines": threading.active_count()
             }
         except: return {}
@@ -181,76 +148,50 @@ class SystemUtils:
     def apply_rules(rules):
         log(f"Syncing {len(rules)} rules...")
         
-        # 確保表存在然後清空，防止 nftables 報錯
-        nft = "table ip aeronode { }\\n"
-        nft += "flush table ip aeronode\\n\\n"
-        
-        nft += "table ip aeronode {\\n"
-        nft += "    chain prerouting {\\n"
-        nft += "        type nat hook prerouting priority -100;\\n"
+        # 嚴謹的 Nftables 配置模板
+        nft = "add table ip nat\\n"
+        nft += "flush table ip nat\\n"
+        nft += "table ip nat {\\n"
+        nft += "  chain PREROUTING { type nat hook prerouting priority dstnat; policy accept; }\\n"
+        nft += "  chain POSTROUTING { type nat hook postrouting priority srcnat; policy accept; }\\n"
         
         for r in rules:
-            p = r.get("protocol", "tcp")
+            raw_proto = r.get("protocol", "tcp")
+            protos = ['tcp', 'udp'] if raw_proto == 'tcp,udp' else [raw_proto]
             sport = r["listen_port"]
             dip = r["dest_ip"]
             dport = r["dest_port"]
             
-            if p == "tcp,udp" or p == "tcp+udp":
-                nft += f"        tcp dport {sport} dnat to {dip}:{dport}\\n"
-                nft += f"        udp dport {sport} dnat to {dip}:{dport}\\n"
-            else:
-                nft += f"        {p} dport {sport} dnat to {dip}:{dport}\\n"
-                
-        nft += "    }\\n\\n"
-        
-        nft += "    chain postrouting {\\n"
-        nft += "        type nat hook postrouting priority 100;\\n"
-        
-        target_ips = set(r["dest_ip"] for r in rules)
-        for dip in target_ips:
-            nft += f"        ip daddr {dip} masquerade\\n"
-            
-        nft += "    }\\n"
+            for p in protos:
+                nft += f"  add rule ip nat PREROUTING {p} dport {sport} counter dnat to {dip}:{dport}\\n"
+                nft += f"  add rule ip nat POSTROUTING ip daddr {dip} {p} dport {dport} counter masquerade\\n"
         nft += "}\\n"
         
         try:
             with open("rules.nft", "w") as f: f.write(nft)
             res = subprocess.run([CONFIG.get("nft_bin", "nft"), "-f", "rules.nft"], capture_output=True, text=True)
             if res.returncode != 0:
-                log(f"Nftables Load Error: {res.stderr}")
+                log(f"Nftables Error: {res.stderr}")
             else:
                 log("Rules applied successfully.")
         except Exception as e:
-            log(f"Nftables Error: {e}")
-
-class CryptoUtils:
-    @staticmethod
-    def decrypt(raw_json, token):
-        try:
-            obj = json.loads(raw_json)
-            key = SHA256.new(token.encode('utf-8')).digest()
-            ciphertext = bytes.fromhex(obj['payload'])
-            iv = bytes.fromhex(obj['iv'])
-            cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
-            return json.loads(cipher.decrypt_and_verify(ciphertext[:-16], ciphertext[-16:]).decode('utf-8'))
-        except Exception as e:
-            log(f"Decrypt Error: {e}")
-            return None
+            log(f"Apply Error: {e}")
 
 def download_and_apply_config():
     try:
-        req = urllib.request.Request(CONFIG_URL, headers={'User-Agent': 'AeroAgent/7.4'})
+        req = urllib.request.Request(CONFIG_URL, headers={'User-Agent': 'AeroAgent/8.0'})
         with urllib.request.urlopen(req, timeout=15) as resp:
             if resp.status == 200:
-                raw = resp.read().decode()
-                data = CryptoUtils.decrypt(raw, CONFIG['token'])
-                if data and 'rules' in data:
-                    SystemUtils.apply_rules(data['rules'])
+                data = json.loads(resp.read().decode('utf-8'))
+                if data.get("success") and "rules" in data:
+                    SystemUtils.apply_rules(data["rules"])
+            else:
+                log(f"Download failed: HTTP {resp.status}")
     except Exception as e:
-        log(f"Config download failed: {e}")
+        log(f"Download Exception: {e}")
 
 def loop():
-    log("Agent started.")
+    log(f"Agent started. Config URL: {CONFIG_URL}")
     download_and_apply_config()
     last_sync = time.time()
     
@@ -260,7 +201,7 @@ def loop():
             payload = { "nodeId": CONFIG["node_id"], "token": CONFIG["token"], "stats": monitor.get_stats() }
             b64 = base64.b64encode(json.dumps(payload).encode()).decode()
             url = f"{CONFIG['panel_url']}/api?action=HEARTBEAT&data={urllib.parse.quote(b64)}"
-            req = urllib.request.Request(url, headers={'User-Agent': 'AeroAgent/7.4'})
+            req = urllib.request.Request(url, headers={'User-Agent': 'AeroAgent/8.0'})
             
             with urllib.request.urlopen(req, timeout=15) as resp:
                 if resp.status == 200:
@@ -270,26 +211,30 @@ def loop():
                         download_and_apply_config()
                         last_sync = time.time()
         except Exception as e:
-            pass
+            log(f"Heartbeat Error: {e}")
         
         time.sleep(interval)
 
 if __name__ == "__main__":
+    try:
+        with open("/proc/sys/net/ipv4/ip_forward", "w") as f: f.write("1")
+    except: pass
     loop()
 PYEOF
 
-# 4. 註冊服務
-echo -e "\${BLUE}[4/4] 註冊 Root 服務...\${NC}"
+# 3. 創建系統服務
+echo -e "\${BLUE}[3/3] 註冊服務...\${NC}"
 
-VENV_PYTHON="$INSTALL_DIR/venv/bin/python"
+PY_BIN=$(command -v python3)
+
 cat > /etc/systemd/system/$SERVICE_NAME.service <<EOF
 [Unit]
-Description=AeroNode Agent
+Description=AeroNode Agent V8
 After=network.target
 [Service]
 User=root
 Group=root
-ExecStart=$VENV_PYTHON -u $INSTALL_DIR/agent.py
+ExecStart=$PY_BIN -u $INSTALL_DIR/agent.py
 WorkingDirectory=$INSTALL_DIR
 Restart=always
 RestartSec=5
@@ -301,7 +246,14 @@ EOF
 systemctl daemon-reload
 systemctl enable $SERVICE_NAME
 systemctl restart $SERVICE_NAME
-echo -e "\\n\${GREEN}✅ 安裝成功！\${NC}"
+
+sleep 2
+if systemctl is-active --quiet $SERVICE_NAME; then
+    echo -e "\n\${GREEN}✅ 安裝成功！Agent 正在運行。\${NC}"
+else
+    echo -e "\n\${RED}❌ 啟動失敗！請查看日誌：\${NC}"
+    journalctl -u $SERVICE_NAME -n 10 --no-pager
+fi
 `;
   return new NextResponse(script, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 }
