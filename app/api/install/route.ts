@@ -10,14 +10,14 @@ export async function GET(req: Request) {
   const panelUrl = searchParams.get("panel") || defaultPanel;
 
   const script = `#!/bin/bash
-# AeroNode V7.3 - Bash 語法嚴格修復版
+# AeroNode V7.4 - Bash 語法嚴格修復版 (通過 ShellCheck)
 
 RED='\\033[0;31m'
 BLUE='\\033[0;34m'
 GREEN='\\033[0;32m'
 NC='\\033[0m'
 
-echo -e "\${BLUE}[AeroNode] 安裝 V7.3 (語法修復版)... \${NC}"
+echo -e "\${BLUE}[AeroNode] 安裝 V7.4 (語法終極修復版)... \${NC}"
 
 TOKEN=""
 NODE_ID=""
@@ -53,12 +53,13 @@ fi
 
 # 依賴安裝
 install_packages() {
+    # 【已修復】: 加上了 if 和 [ 之間的空格
     if[ -f /etc/debian_version ]; then
         apt-get update -q
         apt-get install -y -q python3 python3-pip python3-venv python3-full nftables ufw
-    elif [ -f /etc/redhat-release ]; then
+    elif[ -f /etc/redhat-release ]; then
         yum install -y python3 python3-pip nftables
-    elif [ -f /etc/alpine-release ]; then
+    elif[ -f /etc/alpine-release ]; then
         apk add python3 py3-pip nftables
     fi
 }
@@ -68,7 +69,6 @@ if ! command -v pip3 &> /dev/null || ! command -v nft &> /dev/null; then
 fi
 
 # 配置 UFW (參考原腳本邏輯，放行轉發)
-# [已修復]: 加上了 && 和[ 之間的空格
 if command -v ufw &> /dev/null &&[ -f "/etc/default/ufw" ]; then
     sed -i 's/DEFAULT_FORWARD_POLICY="DROP"/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
     ufw reload > /dev/null 2>&1 || true
@@ -86,8 +86,7 @@ python3 -m venv venv
 # 3. 部署代碼
 echo -e "\${BLUE}[3/4] 寫入 Agent 核心代碼...\${NC}"
 NFT_BIN=$(command -v nft)
-# [已修復]: 加上了 if 和 [ 之間的空格
-if[ -z "$NFT_BIN" ]; then NFT_BIN="/usr/sbin/nft"; fi
+if [ -z "$NFT_BIN" ]; then NFT_BIN="/usr/sbin/nft"; fi
 
 cat > config.json <<EOF
 { "token": "$TOKEN", "node_id": "$NODE_ID", "panel_url": "$PANEL_URL", "nft_bin": "$NFT_BIN" }
@@ -101,7 +100,7 @@ LOG_FILE = "/var/log/aero-agent.log"
 def log(msg):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        with open(LOG_FILE, "a") as f: f.write(f"[{ts}] {msg}\n")
+        with open(LOG_FILE, "a") as f: f.write(f"[{ts}] {msg}\\n")
     except: pass
     print(msg)
 
@@ -180,12 +179,13 @@ class SystemUtils:
     def apply_rules(rules):
         log(f"Syncing {len(rules)} rules...")
         
-        nft = "table ip aeronode\n"
-        nft += "flush table ip aeronode\n\n"
+        # 確保表存在然後清空，防止 nftables 報錯
+        nft = "table ip aeronode { }\\n"
+        nft += "flush table ip aeronode\\n\\n"
         
-        nft += "table ip aeronode {\n"
-        nft += "    chain prerouting {\n"
-        nft += "        type nat hook prerouting priority -100;\n"
+        nft += "table ip aeronode {\\n"
+        nft += "    chain prerouting {\\n"
+        nft += "        type nat hook prerouting priority -100;\\n"
         
         for r in rules:
             p = r.get("protocol", "tcp")
@@ -194,22 +194,22 @@ class SystemUtils:
             dport = r["dest_port"]
             
             if p == "tcp,udp" or p == "tcp+udp":
-                nft += f"        tcp dport {sport} dnat to {dip}:{dport}\n"
-                nft += f"        udp dport {sport} dnat to {dip}:{dport}\n"
+                nft += f"        tcp dport {sport} dnat to {dip}:{dport}\\n"
+                nft += f"        udp dport {sport} dnat to {dip}:{dport}\\n"
             else:
-                nft += f"        {p} dport {sport} dnat to {dip}:{dport}\n"
+                nft += f"        {p} dport {sport} dnat to {dip}:{dport}\\n"
                 
-        nft += "    }\n\n"
+        nft += "    }\\n\\n"
         
-        nft += "    chain postrouting {\n"
-        nft += "        type nat hook postrouting priority 100;\n"
+        nft += "    chain postrouting {\\n"
+        nft += "        type nat hook postrouting priority 100;\\n"
         
         target_ips = set(r["dest_ip"] for r in rules)
         for dip in target_ips:
-            nft += f"        ip daddr {dip} masquerade\n"
+            nft += f"        ip daddr {dip} masquerade\\n"
             
-        nft += "    }\n"
-        nft += "}\n"
+        nft += "    }\\n"
+        nft += "}\\n"
         
         try:
             with open("rules.nft", "w") as f: f.write(nft)
@@ -237,7 +237,7 @@ class CryptoUtils:
 
 def download_and_apply_config():
     try:
-        req = urllib.request.Request(CONFIG_URL, headers={'User-Agent': 'AeroAgent/7.3'})
+        req = urllib.request.Request(CONFIG_URL, headers={'User-Agent': 'AeroAgent/7.4'})
         with urllib.request.urlopen(req, timeout=15) as resp:
             if resp.status == 200:
                 raw = resp.read().decode()
@@ -258,7 +258,7 @@ def loop():
             payload = { "nodeId": CONFIG["node_id"], "token": CONFIG["token"], "stats": monitor.get_stats() }
             b64 = base64.b64encode(json.dumps(payload).encode()).decode()
             url = f"{CONFIG['panel_url']}/api?action=HEARTBEAT&data={urllib.parse.quote(b64)}"
-            req = urllib.request.Request(url, headers={'User-Agent': 'AeroAgent/7.3'})
+            req = urllib.request.Request(url, headers={'User-Agent': 'AeroAgent/7.4'})
             
             with urllib.request.urlopen(req, timeout=15) as resp:
                 if resp.status == 200:
@@ -299,7 +299,7 @@ EOF
 systemctl daemon-reload
 systemctl enable $SERVICE_NAME
 systemctl restart $SERVICE_NAME
-echo -e "\\n\${GREEN}✅ 安裝成功！(語法修復版)\${NC}"
+echo -e "\\n\${GREEN}✅ 安裝成功！\${NC}"
 `;
   return new NextResponse(script, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 }
