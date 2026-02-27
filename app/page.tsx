@@ -279,82 +279,449 @@ function DashboardView({ nodes, allRules }: any) {
     </div>
   );
 }
-
+//节点管理页面
 function NodesView({ nodes, api, fetchAllData }: any) {
-  const [showAdd, setShowAdd] = useState(false);
-  const generateToken = () => Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
-  const [newNode, setNewNode] = useState({ name: "", ip: "", port: "8080", token: "" });
+  // 視圖切換：預設讀取 localStorage
+  const [viewMode, setViewMode] = useState<'card' | 'table'>(() => {
+    return (typeof window !== 'undefined' ? localStorage.getItem('nodesViewMode') as 'card' | 'table' : 'card') || 'card';
+  });
+
   const [isSaving, setIsSaving] = useState(false);
 
-  useEffect(() => { if(showAdd) setNewNode(prev => ({...prev, token: generateToken()})); }, [showAdd]);
+  // 統一對話框狀態（包含錯誤、刪除確認、安裝指令）
+  type DialogConfig = {
+    isOpen: boolean;
+    type: 'error' | 'confirm' | 'install';
+    title: string;
+    message?: string;
+    targetNode?: any;
+  };
+  const[dialog, setDialog] = useState<DialogConfig>({ isOpen: false, type: 'error', title: '' });
 
-  const handleSave = async () => {
-    if (!newNode.name) return alert("請填寫節點名稱");
-    if (!newNode.ip) return alert("請填寫公網 IP");
+  // 氣泡提示狀態 (Toast)
+  const [toast, setToast] = useState({ visible: false, message: "" });
+
+  // 記錄當前正在編輯的節點。null 表示未編輯，如果是新節點則不帶 id
+  const [editingNode, setEditingNode] = useState<any | null>(null);
+
+  const handleViewModeChange = (mode: 'card' | 'table') => {
+    setViewMode(mode);
+    localStorage.setItem('nodesViewMode', mode);
+  };
+
+  const generateToken = () => Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+
+  const showToast = (msg: string) => {
+    setToast({ visible: true, message: msg });
+    setTimeout(() => setToast({ visible: false, message: "" }), 3000);
+  };
+
+  // 節點合法性審查函數（IP/域名）
+  const validateNode = (node: any) => {
+    if (!node.name || node.name.trim() === "") return "請填寫節點名稱";
+    if (!node.ip || node.ip.trim() === "") return "請填寫公網 IP 或域名";
     
+    // 簡單正則驗證 IP (v4) 或域名格式
+    const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+    const domainRegex = /^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$/;
+    
+    if (!ipRegex.test(node.ip) && !domainRegex.test(node.ip)) {
+      return "公網 IP 或域名格式不正確";
+    }
+    return null;
+  };
+
+  const handleSaveNode = async () => {
+    if (!editingNode) return;
+
+    const err = validateNode(editingNode);
+    if (err) {
+      setDialog({ isOpen: true, type: 'error', title: '保存失敗', message: err });
+      return;
+    }
+
     setIsSaving(true);
     try {
-      await api("ADD_NODE", { node: newNode });
-      setShowAdd(false);
-      setNewNode({ name: "", ip: "", port: "8080", token: "" });
+      if (editingNode.id) {
+        // 編輯現有節點
+        await api("EDIT_NODE", { node: editingNode });
+        showToast("✅ 節點更新成功");
+      } else {
+        // 新增節點
+        await api("ADD_NODE", { node: editingNode });
+        // 添加成功後提示並展示指令
+        setDialog({ 
+          isOpen: true, 
+          type: 'install', 
+          title: '添加成功！', 
+          message: '請在目標服務器上運行以下指令安裝 Agent：',
+          targetNode: editingNode 
+        });
+      }
+      setEditingNode(null);
       await fetchAllData();
-      alert("✅ 添加成功！請複製下方指令安裝 Agent。");
-    } catch(e: any) { alert("❌ 保存失敗: " + e.message); }
-    finally { setIsSaving(false); }
+    } catch(e: any) { 
+      setDialog({ isOpen: true, type: 'error', title: '保存發生錯誤', message: e.message });
+    } finally { 
+      setIsSaving(false); 
+    }
+  };
+
+  const executeDelete = async (nodeId: string) => {
+    try {
+      await api("DELETE_NODE", { nodeId });
+      showToast("🗑️ 節點已刪除");
+      await fetchAllData();
+    } catch (e: any) {
+      setDialog({ isOpen: true, type: 'error', title: '刪除失敗', message: e.message });
+    }
+  };
+
+  // 處理彈窗的確認按鈕
+  const handleDialogConfirm = async () => {
+    if (dialog.type === 'error') {
+      setDialog({ ...dialog, isOpen: false });
+    } else if (dialog.type === 'confirm' && dialog.targetNode) {
+      await executeDelete(dialog.targetNode.id);
+      setDialog({ ...dialog, isOpen: false });
+    } else if (dialog.type === 'install') {
+      setDialog({ ...dialog, isOpen: false });
+    }
+  };
+
+  const copyInstallCommand = (node: any) => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const installCmd = `curl -sSL ${origin}/api/install | bash -s -- --token ${node.token} --id ${node.id || '<自動生成ID>'} --panel ${origin}`;
+    navigator.clipboard.writeText(installCmd);
+    showToast("📋 已複製安裝指令");
   };
 
   return (
-    <div className="space-y-6">
-      <motion.button whileTap={{ scale: 0.95 }} onClick={() => setShowAdd(!showAdd)} className="w-full bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)] py-4 rounded-full font-bold">
-        + 添加新節點
-      </motion.button>
-
-      <AnimatePresence>
-        {showAdd && (
-          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[32px] space-y-4 overflow-hidden">
-            <h3 className="font-bold text-lg px-2">填寫節點資訊</h3>
-            <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none focus:border-[var(--md-primary)] border border-transparent" placeholder="節點名稱" value={newNode.name} onChange={e=>setNewNode({...newNode,name:e.target.value})} />
-            <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none focus:border-[var(--md-primary)] border border-transparent" placeholder="公網 IP" value={newNode.ip} onChange={e=>setNewNode({...newNode,ip:e.target.value})} />
-            <div className="relative">
-              <input className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none text-gray-500" value={newNode.token} readOnly />
-              <button onClick={()=>setNewNode({...newNode, token: generateToken()})} className="absolute right-4 top-4 text-xs font-bold text-[var(--md-primary)]">重置</button>
+    <div className="space-y-6 relative">
+      <div className="bg-[#F8FAF7] dark:bg-[#1A1D1B] p-5 rounded-[32px] space-y-5">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center px-2 gap-4">
+          <div className="flex items-center gap-3">
+            <span className="font-bold text-[18px] text-[#191C1A] dark:text-white">節點管理</span>
+            <div className="flex bg-[#E9EFE7] dark:bg-[#202522] p-1 rounded-full shadow-inner">
+              <motion.button 
+                whileTap={{ scale: 0.95 }} 
+                onClick={() => handleViewModeChange('card')} 
+                className={`px-3 py-1.5 rounded-full text-[13px] font-bold flex items-center gap-1.5 transition-colors ${viewMode === 'card' ? 'bg-white dark:bg-[#3A3F3B] shadow-sm text-[#191C1A] dark:text-white' : 'text-gray-500'}`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5"/> 卡片
+              </motion.button>
+              <motion.button 
+                whileTap={{ scale: 0.95 }} 
+                onClick={() => handleViewModeChange('table')} 
+                className={`px-3 py-1.5 rounded-full text-[13px] font-bold flex items-center gap-1.5 transition-colors ${viewMode === 'table' ? 'bg-white dark:bg-[#3A3F3B] shadow-sm text-[#191C1A] dark:text-white' : 'text-gray-500'}`}
+              >
+                <List className="w-3.5 h-3.5"/> 表格
+              </motion.button>
             </div>
-            <motion.button 
-              whileTap={{ scale: 0.95 }} 
-              onClick={handleSave} 
-              disabled={isSaving}
-              className={`w-full py-4 rounded-full font-bold transition-all ${isSaving ? 'bg-gray-400 cursor-not-allowed' : 'bg-[var(--md-primary)] text-[var(--md-on-primary)]'}`}
+          </div>
+          
+          <motion.button 
+            whileTap={{ scale: 0.9 }} 
+            onClick={() => setEditingNode({ name: "", ip: "", port: "8080", token: generateToken() })} 
+            className="text-[var(--md-primary)] font-bold bg-[var(--md-primary-container)] px-5 py-2.5 rounded-full text-sm flex items-center gap-1.5"
+          >
+            <Plus className="w-4 h-4"/> 添加新節點
+          </motion.button>
+        </div>
+
+        {nodes.length === 0 ? (
+          <div className="text-center py-16 text-gray-400 text-sm font-bold flex flex-col items-center gap-3">
+            <div className="w-16 h-16 rounded-full bg-[#E9EFE7] dark:bg-[#202522] flex items-center justify-center">
+              <Server className="w-8 h-8 text-gray-300 dark:text-gray-600"/>
+            </div>
+            暫無節點，請點擊上方按鈕添加
+          </div>
+        ) : (
+          <>
+            {/* 卡片視圖 */}
+            {viewMode === 'card' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <AnimatePresence>
+                  {nodes.map((n: any) => (
+                    <motion.div 
+                      layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} 
+                      key={n.id} 
+                      className="bg-white dark:bg-[#111318] p-5 rounded-[24px] shadow-sm border border-[#E9EFE7] dark:border-white/5 flex flex-col gap-4 relative overflow-hidden"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            {/* 狀態指示燈：假設 n.isOnline 存在，否則默認顯示在線樣式以供預覽 */}
+                            <div className={`w-2.5 h-2.5 rounded-full ${n.isOnline !== false ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-gray-400'}`}></div>
+                            <h3 className="font-bold text-[18px] text-[#191C1A] dark:text-white line-clamp-1">{n.name}</h3>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[13px] font-mono font-bold text-gray-500">
+                            <Globe className="w-3.5 h-3.5" /> {n.ip}
+                          </div>
+                        </div>
+                        <div className="flex bg-[#F8FAF7] dark:bg-white/5 rounded-2xl p-1">
+                          <motion.button whileTap={{ scale: 0.9 }} onClick={() => setEditingNode({ ...n })} className="p-2 text-gray-500 hover:text-[var(--md-primary)] transition-colors">
+                            <Edit2 className="w-4 h-4" />
+                          </motion.button>
+                          <motion.button whileTap={{ scale: 0.9 }} onClick={() => setDialog({ isOpen: true, type: 'confirm', title: '刪除節點', message: `確定要刪除節點「${n.name}」嗎？此操作將斷開所有相關規則。`, targetNode: n })} className="p-2 text-red-400 hover:text-red-500 transition-colors">
+                            <Trash2 className="w-4 h-4" />
+                          </motion.button>
+                        </div>
+                      </div>
+                      
+                      <div className="mt-auto pt-2 border-t border-[#E9EFE7] dark:border-white/5">
+                        <motion.button 
+                          whileTap={{ scale: 0.97 }}
+                          onClick={() => setDialog({ isOpen: true, type: 'install', title: '安裝指令', targetNode: n })}
+                          className="w-full py-2.5 rounded-xl bg-[#F0F4EF] dark:bg-[#202522] text-[13px] font-bold text-[#404943] dark:text-gray-300 flex items-center justify-center gap-2 hover:bg-[#E9EFE7] dark:hover:bg-white/10 transition-colors"
+                        >
+                          <Terminal className="w-4 h-4" /> 查看安裝指令
+                        </motion.button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
+
+            {/* 表格視圖 */}
+            {viewMode === 'table' && (
+              <div className="overflow-x-auto bg-white dark:bg-[#111318] rounded-[24px] shadow-sm border border-[#E9EFE7] dark:border-white/5">
+                <table className="w-full text-left border-collapse whitespace-nowrap">
+                  <thead>
+                    <tr className="border-b border-[#E9EFE7] dark:border-white/5 text-[12px] text-gray-400 uppercase tracking-wider">
+                      <th className="py-4 px-5 font-bold">狀態</th>
+                      <th className="py-4 px-5 font-bold">節點名稱</th>
+                      <th className="py-4 px-5 font-bold">IP/域名</th>
+                      <th className="py-4 px-5 font-bold">部署</th>
+                      <th className="py-4 px-5 font-bold text-right">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {nodes.map((n: any) => (
+                      <tr key={n.id} className="border-b border-gray-50 dark:border-white/5 last:border-0 hover:bg-[#F8FAF7] dark:hover:bg-white/5 transition-colors">
+                        <td className="py-3 px-5">
+                          <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${n.isOnline !== false ? 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-white/5 dark:text-gray-400'}`}>
+                            <div className={`w-1.5 h-1.5 rounded-full ${n.isOnline !== false ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                            {n.isOnline !== false ? '在線' : '離線'}
+                          </div>
+                        </td>
+                        <td className="py-3 px-5 font-bold text-[#404943] dark:text-gray-200">{n.name}</td>
+                        <td className="py-3 px-5 font-mono text-[#191C1A] dark:text-white font-bold">{n.ip}</td>
+                        <td className="py-3 px-5">
+                          <motion.button 
+                            whileTap={{ scale: 0.9 }}
+                            onClick={() => setDialog({ isOpen: true, type: 'install', title: '安裝指令', targetNode: n })}
+                            className="px-3 py-1.5 rounded-lg bg-[#F0F4EF] dark:bg-[#202522] text-[12px] font-bold text-[var(--md-primary)] flex items-center gap-1.5 hover:bg-[#E9EFE7] dark:hover:bg-white/10 transition-colors"
+                          >
+                            <Terminal className="w-3.5 h-3.5" /> 指令
+                          </motion.button>
+                        </td>
+                        <td className="py-3 px-5 flex justify-end gap-2">
+                          <motion.button whileTap={{ scale: 0.9 }} onClick={() => setEditingNode({ ...n })} className="p-2 text-[var(--md-primary)] hover:bg-[var(--md-primary-container)] rounded-full transition-colors">
+                            <Edit2 className="w-4 h-4" />
+                          </motion.button>
+                          <motion.button whileTap={{ scale: 0.9 }} onClick={() => setDialog({ isOpen: true, type: 'confirm', title: '刪除節點', message: `確定要刪除節點「${n.name}」嗎？此操作將斷開所有相關規則。`, targetNode: n })} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors">
+                            <Trash2 className="w-4 h-4" />
+                          </motion.button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* 編輯/新增節點彈出視窗 */}
+      <AnimatePresence>
+        {editingNode && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
+              onClick={() => !isSaving && setEditingNode(null)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 15 }} 
+              animate={{ opacity: 1, scale: 1, y: 0 }} 
+              exit={{ opacity: 0, scale: 0.95, y: 15 }} 
+              className="relative w-full max-w-md bg-[#FBFDF7] dark:bg-[#111318] rounded-[32px] shadow-2xl flex flex-col p-6"
             >
-              {isSaving ? "正在保存..." : "保存 (下一步獲取指令)"}
-            </motion.button>
-          </motion.div>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-[22px] font-bold text-[#191C1A] dark:text-white">
+                  {editingNode.id ? "編輯節點" : "添加新節點"}
+                </h3>
+                <button 
+                  onClick={() => !isSaving && setEditingNode(null)} 
+                  className="p-2 bg-[#E9EFE7] dark:bg-white/10 rounded-full hover:scale-105 transition-transform text-gray-500 dark:text-gray-300"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4 mb-8">
+                <div className="space-y-1.5">
+                  <label className="text-[13px] font-bold text-gray-500 ml-1">節點名稱</label>
+                  <input 
+                    value={editingNode.name} 
+                    onChange={e => setEditingNode({ ...editingNode, name: e.target.value })} 
+                    className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-bold text-sm text-[#191C1A] dark:text-white outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow" 
+                    placeholder="如：香港機房-01" 
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[13px] font-bold text-gray-500 ml-1">公網 IP 或域名</label>
+                  <input 
+                    value={editingNode.ip} 
+                    onChange={e => setEditingNode({ ...editingNode, ip: e.target.value })} 
+                    className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-mono text-sm text-[#191C1A] dark:text-white outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow" 
+                    placeholder="192.168.1.100 或 node.example.com" 
+                  />
+                </div>
+                
+                <div className="space-y-1.5 relative">
+                  <label className="text-[13px] font-bold text-gray-500 ml-1">Agent 通信 Token</label>
+                  <div className="relative">
+                    <input 
+                      value={editingNode.token} 
+                      readOnly
+                      className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 pr-20 rounded-[20px] font-mono text-[13px] text-gray-500 dark:text-gray-400 outline-none" 
+                    />
+                    <button 
+                      onClick={() => setEditingNode({ ...editingNode, token: generateToken() })} 
+                      className="absolute right-3 top-1/2 -translate-y-1/2 px-3 py-1.5 bg-white dark:bg-[#3A3F3B] rounded-xl text-[12px] font-bold text-[var(--md-primary)] shadow-sm hover:scale-105 transition-transform"
+                    >
+                      重置
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-gray-400 ml-1 mt-1">
+                    重置 Token 後，需在服務器上使用新指令重新啟動 Agent。
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setEditingNode(null)} 
+                  disabled={isSaving}
+                  className="flex-1 py-3.5 rounded-full font-bold text-[#404943] dark:text-gray-200 bg-[#E9EFE7] dark:bg-white/10 hover:bg-gray-300 dark:hover:bg-white/20 transition-colors disabled:opacity-50"
+                >
+                  取消
+                </button>
+                <button 
+                  onClick={handleSaveNode} 
+                  disabled={isSaving}
+                  className="flex-1 py-3.5 rounded-full font-bold bg-[var(--md-primary)] text-[var(--md-on-primary)] hover:opacity-90 transition-opacity flex justify-center items-center gap-2 disabled:opacity-70 shadow-md shadow-[var(--md-primary)]/20"
+                >
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>保存中...</span>
+                    </>
+                  ) : (
+                    <span>保存</span>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
-      {nodes.map((n: any) => {
-        const origin = typeof window !== 'undefined' ? window.location.origin : '';
-        const installCmd = `curl -sSL ${origin}/api/install | bash -s -- --token ${n.token} --id ${n.id} --panel ${origin}`;
-        
-        return (
-          <motion.div layout key={n.id} className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[32px] space-y-4">
-             <div className="flex justify-between items-center">
-                <h3 className="font-bold text-lg">{n.name}</h3>
-                <div className="flex gap-2">
-                   <motion.button whileTap={{ scale: 0.9 }} onClick={()=>{if(confirm("確定刪除？")) api("DELETE_NODE",{nodeId:n.id}).then(fetchAllData)}} className="p-3 bg-red-100 dark:bg-red-900/30 text-red-500 rounded-2xl"><Trash2 className="w-5 h-5"/></motion.button>
-                </div>
-             </div>
-             <div className="bg-white dark:bg-[#111318] p-4 rounded-2xl border border-gray-100 dark:border-white/5">
-                <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-2"><Terminal className="w-4 h-4"/> 安裝指令 (點擊複製)</p>
-                <code onClick={()=>{navigator.clipboard.writeText(installCmd);alert("已複製")}} className="block text-xs text-[var(--md-primary)] break-all cursor-pointer hover:opacity-80 transition-opacity leading-relaxed">
-                  {installCmd}
-                </code>
-             </div>
+      {/* 全局 MD3 彈窗 (錯誤提示、確認、安裝指令) */}
+      <AnimatePresence>
+        {dialog.isOpen && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
+              onClick={() => setDialog({ ...dialog, isOpen: false })}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm" 
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 15 }} 
+              animate={{ opacity: 1, scale: 1, y: 0 }} 
+              exit={{ opacity: 0, scale: 0.95, y: 15 }} 
+              className="relative w-full max-w-sm bg-[#FBFDF7] dark:bg-[#111318] rounded-[28px] shadow-2xl flex flex-col p-6"
+            >
+              <h3 className="text-[22px] font-bold mb-4 text-[#191C1A] dark:text-[#E2E3DF]">
+                {dialog.title}
+              </h3>
+              
+              <div className="mb-6 max-h-[60vh] overflow-y-auto hide-scrollbar">
+                {dialog.type === 'install' && dialog.targetNode ? (
+                  <div className="space-y-4">
+                    <p className="text-[14px] leading-relaxed text-[#404943] dark:text-[#C3C8C4] font-medium">
+                      {dialog.message || '請在目標節點的終端機執行以下指令：'}
+                    </p>
+                    <div 
+                      onClick={() => copyInstallCommand(dialog.targetNode)}
+                      className="bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[16px] cursor-pointer hover:ring-2 ring-[var(--md-primary)] transition-all group relative"
+                    >
+                      <code className="text-[12px] font-mono text-[var(--md-primary)] break-all leading-relaxed line-clamp-4 group-hover:opacity-80">
+                        {`curl -sSL ${typeof window !== 'undefined' ? window.location.origin : ''}/api/install | bash -s -- --token ${dialog.targetNode.token} --id ${dialog.targetNode.id || '<ID>'} --panel ${typeof window !== 'undefined' ? window.location.origin : ''}`}
+                      </code>
+                      <div className="absolute top-2 right-2 bg-white dark:bg-[#3A3F3B] p-1.5 rounded-lg shadow-sm opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Copy className="w-4 h-4 text-gray-500" />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-gray-400 text-center font-bold">👆 點擊代碼框複製指令</p>
+                  </div>
+                ) : (
+                  <p className="text-[14px] leading-relaxed text-[#404943] dark:text-[#C3C8C4] font-medium">
+                    {dialog.message}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 mt-auto">
+                {dialog.type === 'confirm' && (
+                  <button 
+                    onClick={() => setDialog({ ...dialog, isOpen: false })} 
+                    className="px-5 py-2.5 rounded-full text-sm font-bold text-[#404943] dark:text-gray-300 hover:bg-[#E9EFE7] dark:hover:bg-white/10 transition-colors"
+                  >
+                    取消
+                  </button>
+                )}
+                <button 
+                  onClick={handleDialogConfirm} 
+                  className={`px-5 py-2.5 rounded-full text-sm font-bold transition-opacity flex items-center gap-2 ${
+                    dialog.type === 'confirm' 
+                      ? 'bg-red-500 text-white hover:opacity-90' 
+                      : 'bg-[var(--md-primary)] text-[var(--md-on-primary)] hover:opacity-90'
+                  }`}
+                >
+                  {dialog.type === 'install' ? '完成' : '確定'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MD3 風格氣泡提示 (Toast) */}
+      <AnimatePresence>
+        {toast.visible && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.9 }}
+            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100]"
+          >
+            <div className="bg-[#191C1A] dark:bg-[#E2E3DF] text-[#E2E3DF] dark:text-[#191C1A] px-6 py-3 rounded-full shadow-xl font-bold text-[14px] flex items-center gap-2">
+              {toast.message}
+            </div>
           </motion.div>
-        );
-      })}
+        )}
+      </AnimatePresence>
     </div>
   );
 }
+
 //規則編輯頁面
 function RulesView({ nodes, allRules, api, fetchAllData }: any) {
   const[selected, setSelected] = useState<string>(nodes[0]?.id || "");
