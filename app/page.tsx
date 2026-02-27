@@ -4,11 +4,12 @@ import axios from "axios";
 import { motion, AnimatePresence } from "framer-motion";
 // 註釋掉二維碼依賴
 // import { QRCodeSVG } from "qrcode.react";
+//导入全局图标
 import { 
   Shield, RefreshCw, Trash2, Home, Network, Server, User, LogOut, 
   Palette, PauseCircle, Download, Upload, KeyRound, Save, Terminal,
   Edit2,X,ChevronDown,Loader2,LayoutGrid, List as ListIcon, AlertCircle, 
-  CheckCircle2, Copy,List
+  CheckCircle2, Copy,List,Plus,ArrowRight
 } from "lucide-react";
 
 const THEMES = {
