@@ -385,8 +385,8 @@ function NodesView({ nodes, api, fetchAllData }: any) {
     }
   };
 
-  // 定義原生的彈簧物理動畫
-  const springAnim = { type: "spring", stiffness: 400, damping: 30 };
+  // 定義原生的彈簧物理動畫 (解決 TypeScript 類型推斷錯誤，加入 as const)
+  const springAnim = { type: "spring" as const, stiffness: 400, damping: 30 };
 
   return (
     <div className="space-y-6 relative">
@@ -575,7 +575,7 @@ function NodesView({ nodes, api, fetchAllData }: any) {
                     <input 
                       value={editing.node.token} 
                       readOnly
-                      className="w-full bg-transparent p-4 font-mono text-sm text-gray-500 dark:text-gray-400 outline-none" 
+                      className="w-full bg-transparent p-4 font-mono text-sm text-gray-500 dark:text-gray-400 outline-none pr-16" 
                     />
                     <motion.button 
                       whileTap={{ scale: 0.9 }}
@@ -669,13 +669,13 @@ function NodesView({ nodes, api, fetchAllData }: any) {
       {/* 居中氣泡提示 (Toast) */}
       <AnimatePresence>
         {toast.show && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none w-[100vw] h-[100dvh]">
             <motion.div
               initial={{ opacity: 0, scale: 0.8, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.8, y: -20 }}
               transition={springAnim}
-              className="bg-[#2D312E] dark:bg-[#E2E3DF] text-white dark:text-[#191C1A] px-6 py-3.5 rounded-full shadow-2xl font-bold text-[14px] tracking-wide flex items-center gap-2"
+              className="bg-[#2D312E] dark:bg-[#E2E3DF] text-white dark:text-[#191C1A] px-6 py-3.5 rounded-full shadow-2xl font-bold text-[14px] tracking-wide flex items-center gap-2 pointer-events-auto"
             >
               {toast.message}
             </motion.div>
