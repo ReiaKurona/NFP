@@ -445,7 +445,7 @@ function NodesView({ nodes, api, fetchAllData }: any) {
                           <div className="flex items-center gap-2">
                             {/* 狀態指示點 */}
                             <span className="relative flex h-3 w-3">
-                              {n.is_online ? (
+                              {isOnline ? (
                                 <><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span></>
                               ) : (
                                 <span className="relative inline-flex rounded-full h-3 w-3 bg-gray-300 dark:bg-gray-600"></span>
