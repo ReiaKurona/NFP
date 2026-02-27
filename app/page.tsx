@@ -282,7 +282,7 @@ function DashboardView({ nodes, allRules }: any) {
 //节点管理页面
 function NodesView({ nodes, api, fetchAllData }: any) {
   // 視圖切換：預設讀取 localStorage
-  const[viewMode, setViewMode] = useState<'card' | 'table'>(() => {
+  const [viewMode, setViewMode] = useState<'card' | 'table'>(() => {
     return (typeof window !== 'undefined' ? localStorage.getItem('nodesViewMode') as 'card' | 'table' : 'card') || 'card';
   });
 
@@ -298,10 +298,10 @@ function NodesView({ nodes, api, fetchAllData }: any) {
   const[dialog, setDialog] = useState<DialogConfig>({ isOpen: false, type: 'error', title: '' });
 
   // 編輯與新增狀態：null 表示未編輯，index: -1 表示新增
-  const[editing, setEditing] = useState<{ index: number; node: any } | null>(null);
+  const [editing, setEditing] = useState<{ index: number; node: any } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   
-  // 居中氣泡提示狀態
+  // 底部居中氣泡提示狀態
   const [toast, setToast] = useState({ show: false, message: '' });
 
   const generateToken = () => Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
@@ -385,7 +385,7 @@ function NodesView({ nodes, api, fetchAllData }: any) {
     }
   };
 
-  // 定義原生的彈簧物理動畫 (解決 TypeScript 類型推斷錯誤，加入 as const)
+  // 解決 Type Error：加入 as const 強制約束類型
   const springAnim = { type: "spring" as const, stiffness: 400, damping: 30 };
 
   return (
@@ -434,46 +434,51 @@ function NodesView({ nodes, api, fetchAllData }: any) {
             {viewMode === 'card' && (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <AnimatePresence>
-                  {nodes.map((n: any, idx: number) => (
-                    <motion.div 
-                      layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={springAnim}
-                      key={n.id} 
-                      className="bg-white dark:bg-[#111318] p-5 rounded-[24px] shadow-sm border border-[#E9EFE7] dark:border-white/5 flex flex-col gap-4"
-                    >
-                      <div className="flex justify-between items-start">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            {/* 狀態指示點 */}
-                            <span className="relative flex h-3 w-3">
-                              {isOnline ? (
-                                <><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span></>
-                              ) : (
-                                <span className="relative inline-flex rounded-full h-3 w-3 bg-gray-300 dark:bg-gray-600"></span>
-                              )}
-                            </span>
-                            <span className="text-[18px] font-bold text-[#191C1A] dark:text-white line-clamp-1">{n.name}</span>
-                          </div>
-                          <div className="text-[13px] font-mono font-bold text-gray-500">{n.ip}</div>
-                        </div>
-                        <div className="flex bg-[#F8FAF7] dark:bg-white/5 rounded-2xl p-1">
-                          <motion.button whileTap={{ scale: 0.9 }} onClick={() => setEditing({ index: idx, node: { ...n } })} className="p-2 text-gray-500 hover:text-[var(--md-primary)] transition-colors">
-                            <Edit2 className="w-4 h-4" />
-                          </motion.button>
-                          <motion.button whileTap={{ scale: 0.9 }} onClick={() => setDialog({ isOpen: true, type: 'confirm', title: '刪除節點', message: `確定要刪除節點「${n.name}」嗎？此操作無法恢復。`, targetId: n.id })} className="p-2 text-red-400 hover:text-red-500 transition-colors">
-                            <Trash2 className="w-4 h-4" />
-                          </motion.button>
-                        </div>
-                      </div>
-                      
-                      <motion.button 
-                        whileTap={{ scale: 0.95 }} 
-                        onClick={() => openInstallDialog(n)}
-                        className="w-full bg-[#F0F4EF] dark:bg-[#202522] hover:bg-[#E9EFE7] dark:hover:bg-white/10 transition-colors rounded-[16px] p-3 flex items-center justify-center gap-2 text-[13px] font-bold text-[#404943] dark:text-gray-300"
+                  {nodes.map((n: any, idx: number) => {
+                    // 兼容儀表板判斷在線邏輯
+                    const isOnline = n.lastSeen && (Date.now() - n.lastSeen < 60000);
+                    
+                    return (
+                      <motion.div 
+                        layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={springAnim}
+                        key={n.id} 
+                        className="bg-white dark:bg-[#111318] p-5 rounded-[24px] shadow-sm border border-[#E9EFE7] dark:border-white/5 flex flex-col gap-4"
                       >
-                        <Terminal className="w-4 h-4" /> 獲取安裝指令
-                      </motion.button>
-                    </motion.div>
-                  ))}
+                        <div className="flex justify-between items-start">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              {/* 狀態指示點 */}
+                              <span className="relative flex h-3 w-3">
+                                {isOnline ? (
+                                  <><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span></>
+                                ) : (
+                                  <span className="relative inline-flex rounded-full h-3 w-3 bg-gray-300 dark:bg-gray-600"></span>
+                                )}
+                              </span>
+                              <span className="text-[18px] font-bold text-[#191C1A] dark:text-white line-clamp-1">{n.name}</span>
+                            </div>
+                            <div className="text-[13px] font-mono font-bold text-gray-500">{n.ip}</div>
+                          </div>
+                          <div className="flex bg-[#F8FAF7] dark:bg-white/5 rounded-2xl p-1">
+                            <motion.button whileTap={{ scale: 0.9 }} onClick={() => setEditing({ index: idx, node: { ...n } })} className="p-2 text-gray-500 hover:text-[var(--md-primary)] transition-colors">
+                              <Edit2 className="w-4 h-4" />
+                            </motion.button>
+                            <motion.button whileTap={{ scale: 0.9 }} onClick={() => setDialog({ isOpen: true, type: 'confirm', title: '刪除節點', message: `確定要刪除節點「${n.name}」嗎？此操作無法恢復。`, targetId: n.id })} className="p-2 text-red-400 hover:text-red-500 transition-colors">
+                              <Trash2 className="w-4 h-4" />
+                            </motion.button>
+                          </div>
+                        </div>
+                        
+                        <motion.button 
+                          whileTap={{ scale: 0.95 }} 
+                          onClick={() => openInstallDialog(n)}
+                          className="w-full bg-[#F0F4EF] dark:bg-[#202522] hover:bg-[#E9EFE7] dark:hover:bg-white/10 transition-colors rounded-[16px] p-3 flex items-center justify-center gap-2 text-[13px] font-bold text-[#404943] dark:text-gray-300"
+                        >
+                          <Terminal className="w-4 h-4" /> 獲取安裝指令
+                        </motion.button>
+                      </motion.div>
+                    );
+                  })}
                 </AnimatePresence>
               </div>
             )}
@@ -491,32 +496,36 @@ function NodesView({ nodes, api, fetchAllData }: any) {
                     </tr>
                   </thead>
                   <tbody>
-                    {nodes.map((n: any, idx: number) => (
-                      <tr key={n.id} className="border-b border-gray-50 dark:border-white/5 last:border-0 hover:bg-[#F8FAF7] dark:hover:bg-white/5 transition-colors">
-                        <td className="py-3 px-5">
-                          <span className="relative flex h-3 w-3">
-                            {n.is_online ? (
-                              <><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span></>
-                            ) : (
-                              <span className="relative inline-flex rounded-full h-3 w-3 bg-gray-300 dark:bg-gray-600"></span>
-                            )}
-                          </span>
-                        </td>
-                        <td className="py-3 px-5 font-bold text-[#404943] dark:text-gray-300">{n.name}</td>
-                        <td className="py-3 px-5 font-mono text-[#191C1A] dark:text-white font-bold">{n.ip}</td>
-                        <td className="py-3 px-5 flex justify-end gap-2">
-                          <motion.button whileTap={{ scale: 0.9 }} onClick={() => openInstallDialog(n)} className="p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full transition-colors" title="獲取指令">
-                            <Terminal className="w-4 h-4" />
-                          </motion.button>
-                          <motion.button whileTap={{ scale: 0.9 }} onClick={() => setEditing({ index: idx, node: { ...n } })} className="p-2 text-[var(--md-primary)] hover:bg-[var(--md-primary-container)] rounded-full transition-colors">
-                            <Edit2 className="w-4 h-4" />
-                          </motion.button>
-                          <motion.button whileTap={{ scale: 0.9 }} onClick={() => setDialog({ isOpen: true, type: 'confirm', title: '刪除節點', message: `確定要刪除節點「${n.name}」嗎？此操作無法恢復。`, targetId: n.id })} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors">
-                            <Trash2 className="w-4 h-4" />
-                          </motion.button>
-                        </td>
-                      </tr>
-                    ))}
+                    {nodes.map((n: any, idx: number) => {
+                      const isOnline = n.lastSeen && (Date.now() - n.lastSeen < 60000);
+
+                      return (
+                        <tr key={n.id} className="border-b border-gray-50 dark:border-white/5 last:border-0 hover:bg-[#F8FAF7] dark:hover:bg-white/5 transition-colors">
+                          <td className="py-3 px-5">
+                            <span className="relative flex h-3 w-3">
+                              {isOnline ? (
+                                <><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span></>
+                              ) : (
+                                <span className="relative inline-flex rounded-full h-3 w-3 bg-gray-300 dark:bg-gray-600"></span>
+                              )}
+                            </span>
+                          </td>
+                          <td className="py-3 px-5 font-bold text-[#404943] dark:text-gray-300">{n.name}</td>
+                          <td className="py-3 px-5 font-mono text-[#191C1A] dark:text-white font-bold">{n.ip}</td>
+                          <td className="py-3 px-5 flex justify-end gap-2">
+                            <motion.button whileTap={{ scale: 0.9 }} onClick={() => openInstallDialog(n)} className="p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full transition-colors" title="獲取指令">
+                              <Terminal className="w-4 h-4" />
+                            </motion.button>
+                            <motion.button whileTap={{ scale: 0.9 }} onClick={() => setEditing({ index: idx, node: { ...n } })} className="p-2 text-[var(--md-primary)] hover:bg-[var(--md-primary-container)] rounded-full transition-colors">
+                              <Edit2 className="w-4 h-4" />
+                            </motion.button>
+                            <motion.button whileTap={{ scale: 0.9 }} onClick={() => setDialog({ isOpen: true, type: 'confirm', title: '刪除節點', message: `確定要刪除節點「${n.name}」嗎？此操作無法恢復。`, targetId: n.id })} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors">
+                              <Trash2 className="w-4 h-4" />
+                            </motion.button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -528,7 +537,7 @@ function NodesView({ nodes, api, fetchAllData }: any) {
       {/* 編輯/新增節點 MD3 彈窗 */}
       <AnimatePresence>
         {editing && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 w-[100vw] h-[100dvh]">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 w-screen h-[100dvh]">
             <motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
               onClick={() => !isSaving && setEditing(null)}
@@ -575,7 +584,7 @@ function NodesView({ nodes, api, fetchAllData }: any) {
                     <input 
                       value={editing.node.token} 
                       readOnly
-                      className="w-full bg-transparent p-4 font-mono text-sm text-gray-500 dark:text-gray-400 outline-none pr-16" 
+                      className="w-full bg-transparent p-4 font-mono text-sm text-gray-500 dark:text-gray-400 outline-none" 
                     />
                     <motion.button 
                       whileTap={{ scale: 0.9 }}
@@ -610,7 +619,7 @@ function NodesView({ nodes, api, fetchAllData }: any) {
       {/* 統一全局的 MD3 彈窗 (錯誤提示、確認、安裝指令) */}
       <AnimatePresence>
         {dialog.isOpen && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 w-[100vw] h-[100dvh]">
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 w-screen h-[100dvh]">
             <motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
               onClick={() => !isSaving && setDialog({ ...dialog, isOpen: false })}
@@ -666,16 +675,16 @@ function NodesView({ nodes, api, fetchAllData }: any) {
         )}
       </AnimatePresence>
 
-      {/* 居中氣泡提示 (Toast) */}
+      {/* 居中氣泡提示 (Toast) - 完全符合淺/深色邏輯與手機 MD3 樣式 */}
       <AnimatePresence>
         {toast.show && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-none w-[100vw] h-[100dvh]">
+          <div className="fixed bottom-12 left-0 right-0 z-[100] flex justify-center pointer-events-none px-4">
             <motion.div
-              initial={{ opacity: 0, scale: 0.8, y: 20 }}
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.8, y: -20 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
               transition={springAnim}
-              className="bg-[#2D312E] dark:bg-[#E2E3DF] text-white dark:text-[#191C1A] px-6 py-3.5 rounded-full shadow-2xl font-bold text-[14px] tracking-wide flex items-center gap-2 pointer-events-auto"
+              className="bg-[#FBFDF7] dark:bg-[#2A2F2C] text-[#191C1A] dark:text-[#E2E3DF] border border-black/5 dark:border-white/5 px-6 py-3.5 rounded-full shadow-lg font-bold text-[14px] tracking-wide flex items-center gap-2"
             >
               {toast.message}
             </motion.div>
