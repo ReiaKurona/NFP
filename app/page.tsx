@@ -567,7 +567,7 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
           </div>
         ) : (
           <>
-           // {/* 卡片視圖 */}
+            {/* 卡片視圖 */}
             {viewMode === 'card' && (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <AnimatePresence>
