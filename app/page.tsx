@@ -697,88 +697,119 @@ function NodesView({ nodes, api, fetchAllData }: any) {
 }
 
 //規則編輯頁面
-//規則編輯頁面
 function RulesView({ nodes, allRules, api, fetchAllData }: any) {
   const [selected, setSelected] = useState<string>(nodes[0]?.id || "");
-  const [rules, setRules] = useState<any[]>([]);
+  const[rules, setRules] = useState<any[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   
-  // 視圖切換
-  const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
+  // 視圖狀態：'card' | 'table'
+  const[viewMode, setViewMode] = useState<'card' | 'table'>('card');
+
+  // 編輯與交互狀態
+  const [editing, setEditing] = useState<{ index: number; rule: any } | null>(null);
+  const [isProtocolSelectOpen, setIsProtocolSelectOpen] = useState(false);
+  const[isNodeSelectOpen, setIsNodeSelectOpen] = useState(false);
   
-  // 編輯與彈窗狀態
-  const [editing, setEditing] = useState<{ index: number; rule: any; targetNodeId: string } | null>(null);
-  const[openDropdown, setOpenDropdown] = useState<'node' | 'protocol' | null>(null);
-  
-  // 批量導入/導出狀態
-  const [importExportModal, setImportExportModal] = useState<{ isOpen: boolean; mode: 'import' | 'export'; text: string } | null>(null);
-  
-  // 通用對話框 (審查警告、刪除確認、導入報告等)
-  const [dialog, setDialog] = useState<any>(null);
+  // 彈窗狀態
+  const [alertState, setAlertState] = useState<{ isOpen: boolean; title: string; message: string | React.ReactNode; type: 'error'|'info'|'success'; onConfirm?: () => void }>({ isOpen: false, title: "", message: "", type: "info" });
+  const [confirmState, setConfirmState] = useState<{ isOpen: boolean; title: string; message: string; onConfirm: () => void } | null>(null);
+  const [importExportState, setImportExportState] = useState<{ isOpen: boolean; mode: 'import'|'export'; text: string } | null>(null);
   
   // 診斷狀態
-  const[diagnostic, setDiagnostic] = useState<any>(null);
+  const[diagnosticState, setDiagnosticState] = useState<{ isOpen: boolean; rule: any; status: 'input'|'testing'|'result'; testPort?: string; result?: any } | null>(null);
 
   useEffect(() => {
     if (selected) setRules(allRules[selected] || []);
   }, [selected, allRules]);
 
-  // 規則合法性審查
-  const validateRule = (r: any, isImport = false, listToCompare = rules, currentEditIndex = -1) => {
-    if (!r.listen_port || !r.dest_ip || !r.dest_port || !r.protocol) return "欄位不能為空";
-    if (!/^\d+(-\d+)?$/.test(r.listen_port)) return `本地端口/區間格式錯誤: ${r.listen_port}`;
-    if (!/^\d+(-\d+)?$/.test(r.dest_port)) return `目標端口格式錯誤: ${r.dest_port}`;
-    if (!/^([a-zA-Z0-9.-]+)$/.test(r.dest_ip)) return `目標 IP/域名 格式錯誤: ${r.dest_ip}`;
-
-    const isDuplicate = listToCompare.some((ex: any, i: number) => {
-      if (!isImport && currentEditIndex === i) return false;
-      if (r.name && ex.name === r.name) return true;
-      if (ex.listen_port === r.listen_port && ex.dest_ip === r.dest_ip && ex.dest_port === r.dest_port && ex.protocol === r.protocol) return true;
-      return false;
+  // 輔助：自動生成規則名稱
+  const generateRuleName = (targetNodeId: string) => {
+    const nodeRules = allRules[targetNodeId] ||[];
+    let maxNum = 0;
+    nodeRules.forEach((r: any) => {
+      if (r.name && r.name.startsWith("新建規則")) {
+        const num = parseInt(r.name.replace("新建規則", "").trim());
+        if (!isNaN(num) && num > maxNum) maxNum = num;
+      }
     });
+    return `新建規則 ${maxNum + 1}`;
+  };
 
-    if (isDuplicate) return "規則已存在或名稱重複";
-    return null;
+  // 輔助：校驗規則合法性
+  const validateRule = (r: any, targetNodeId: string, currentIndex: number) => {
+    let errors =[];
+    
+    // 檢查空值
+    if (!r.listen_port) errors.push("本地端口不能為空");
+    if (!r.dest_ip) errors.push("目標 IP 不能為空");
+    if (!r.dest_port) errors.push("目標端口不能為空");
+
+    // 檢查端口格式 (數字或區間)
+    const portRegex = /^(\d+)(-\d+)?$/;
+    if (r.listen_port && !portRegex.test(r.listen_port)) errors.push("本地端口格式錯誤 (僅限數字或用'-'連接的區間)");
+    if (r.dest_port && !portRegex.test(r.dest_port)) errors.push("目標端口格式錯誤 (僅限數字或用'-'連接的區間)");
+
+    // 檢查IP格式 (基礎的正則校驗)
+    const ipDomainRegex = /^[a-zA-Z0-9.:-]+$/;
+    if (r.dest_ip && !ipDomainRegex.test(r.dest_ip)) errors.push("目標 IP 格式錯誤，包含非法字符");
+
+    // 檢查重名和重複規則
+    const targetRules = allRules[targetNodeId] ||[];
+    const isDuplicateName = targetRules.some((existing: any, i: number) => 
+      existing.name === r.name && r.name !== "" && (targetNodeId !== selected || i !== currentIndex)
+    );
+    if (isDuplicateName) errors.push(`節點下已存在名為「${r.name}」的規則`);
+
+    const isDuplicateRule = targetRules.some((existing: any, i: number) => 
+      existing.listen_port === r.listen_port && existing.protocol === r.protocol && (targetNodeId !== selected || i !== currentIndex)
+    );
+    if (isDuplicateRule) errors.push("節點下已存在相同入口端口與協議的轉發規則");
+
+    return errors;
   };
 
   const handleSave = async () => {
     if (!editing) return;
     
-    // 自動填充名稱
-    const newRule = { ...editing.rule };
-    if (!newRule.name || newRule.name.trim() === "") {
-      newRule.name = `新建規則${Math.floor(Math.random() * 10000)}`;
+    let ruleToSave = { ...editing.rule };
+    if (!ruleToSave.name || ruleToSave.name.trim() === "") {
+      ruleToSave.name = generateRuleName(ruleToSave.nodeId);
     }
 
-    const targetRules = editing.targetNodeId === selected ? [...rules] :[...(allRules[editing.targetNodeId] ||[])];
-    const err = validateRule(newRule, false, targetRules, editing.targetNodeId === selected ? editing.index : -1);
-    
-    if (err) {
-      setDialog({
+    const errors = validateRule(ruleToSave, ruleToSave.nodeId, editing.index);
+    if (errors.length > 0) {
+      setAlertState({
+        isOpen: true,
+        type: 'error',
         title: "保存失敗",
-        content: err,
-        confirmText: "我知道了",
-        onConfirm: () => setDialog(null)
+        message: (
+          <ul className="list-disc pl-4 space-y-1 text-sm">
+            {errors.map((e, i) => <li key={i}>{e}</li>)}
+          </ul>
+        )
       });
       return;
     }
 
     setIsSaving(true);
     try {
-      if (editing.index === -1 || editing.targetNodeId !== selected) {
-        if (editing.targetNodeId !== selected && editing.index !== -1) {
-          // 如果修改了歸屬節點，先從原節點刪除
-          const oldRules = [...rules];
+      let targetRules = [...(allRules[ruleToSave.nodeId] ||[])];
+      
+      if (ruleToSave.nodeId === selected) {
+        if (editing.index === -1) targetRules.push(ruleToSave);
+        else targetRules[editing.index] = ruleToSave;
+      } else {
+        // 如果切換了歸屬節點
+        targetRules.push(ruleToSave);
+        if (editing.index !== -1 && ruleToSave.nodeId !== selected) {
+          let oldRules = [...rules];
           oldRules.splice(editing.index, 1);
           await api("SAVE_RULES", { nodeId: selected, rules: oldRules });
         }
-        targetRules.push(newRule);
-      } else {
-        targetRules[editing.index] = newRule;
       }
 
-      await api("SAVE_RULES", { nodeId: editing.targetNodeId, rules: targetRules });
-      if (editing.targetNodeId === selected) setRules(targetRules);
+      await api("SAVE_RULES", { nodeId: ruleToSave.nodeId, rules: targetRules });
+      if (ruleToSave.nodeId === selected) setRules(targetRules);
       fetchAllData();
       setEditing(null);
     } finally {
@@ -786,134 +817,107 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
     }
   };
 
-  const handleDelete = (idx: number) => {
-    setDialog({
-      title: "刪除規則",
-      content: "確定要刪除這條規則嗎？操作無法撤銷。",
-      confirmText: "刪除",
-      cancelText: "取消",
-      isDanger: true,
+  const confirmDelete = (idx: number) => {
+    setConfirmState({
+      isOpen: true,
+      title: "確認刪除",
+      message: `確定要刪除規則「${rules[idx].name || rules[idx].listen_port}」嗎？此操作無法撤銷。`,
       onConfirm: async () => {
-        setDialog(null);
         const newRules = [...rules];
         newRules.splice(idx, 1);
         setRules(newRules);
         await api("SAVE_RULES", { nodeId: selected, rules: newRules });
         fetchAllData();
+        setConfirmState(null);
       }
     });
   };
 
-  const handleBatchImport = async () => {
-    if (!importExportModal?.text.trim()) return;
-    const lines = importExportModal.text.split('\n').filter((l: string) => l.trim() !== '');
-    let successCount = 0;
-    let failCount = 0;
-    const failReasons: string[] = [];
-    const newRules = [...rules];
+  // 批量導入導出處理
+  const handleImportExport = () => {
+    if (importExportState?.mode === 'export') {
+      const text = rules.map(r => `${r.name || ""} ${r.listen_port}|${r.dest_ip}|${r.dest_port}|${r.protocol}`).join("\n");
+      setImportExportState({ isOpen: true, mode: 'export', text });
+    } else if (importExportState?.mode === 'import') {
+      const lines = importExportState.text.split('\n').filter(l => l.trim() !== "");
+      let successCount = 0;
+      let fails: string[] = [];
+      let newRules = [...rules];
 
-    lines.forEach((line: string, idx: number) => {
-      const parts = line.trim().split(' ');
-      const ruleStr = parts.length > 1 ? parts.pop() : parts[0];
-      const name = parts.length > 0 ? parts.join(' ').trim() : `新建規則${newRules.length + 1}`;
-      
-      if (!ruleStr) return;
-      const rParts = ruleStr.split('|');
-      if (rParts.length !== 4) {
-        failCount++;
-        failReasons.push(`第${idx + 1}行 格式不完整`);
-        return;
-      }
-
-      const newRule = { name, listen_port: rParts[0], dest_ip: rParts[1], dest_port: rParts[2], protocol: rParts[3] };
-      const err = validateRule(newRule, true, newRules);
-      
-      if (err) {
-        failCount++;
-        failReasons.push(`第${idx + 1}行: ${err}`);
-      } else {
-        newRules.push(newRule);
-        successCount++;
-      }
-    });
-
-    if (failCount > 0) {
-      setDialog({
-        title: "導入報告",
-        content: `檢測到 ${lines.length} 條規則\n成功導入: ${successCount} 條\n失敗: ${failCount} 條\n\n失敗原因:\n${failReasons.join('\n')}`,
-        confirmText: "返回編輯",
-        cancelText: "取消",
-        onConfirm: () => setDialog(null),
-        onCancel: () => {
-          setDialog(null);
-          setImportExportModal(null);
+      lines.forEach((line, idx) => {
+        const match = line.trim().match(/^(?:(.*)\s+)?([\d-]+)\|([^|]+)\|([\d-]+)\|(tcp|udp|tcp,udp)$/i);
+        if (!match) {
+          fails.push(`第 ${idx + 1} 行: 格式無法解析`);
+          return;
+        }
+        const [_, name, lPort, ip, dPort, prot] = match;
+        const newRule = { name: name?.trim() || "", listen_port: lPort, dest_ip: ip, dest_port: dPort, protocol: prot.toLowerCase(), nodeId: selected };
+        
+        if (!newRule.name) newRule.name = generateRuleName(selected);
+        const errs = validateRule(newRule, selected, -1);
+        
+        if (errs.length > 0) {
+          fails.push(`第 ${idx + 1} 行: ${errs.join("；")}`);
+        } else {
+          newRules.push(newRule);
+          successCount++;
         }
       });
-    } else {
-      setImportExportModal(null);
-    }
 
-    if (successCount > 0) {
-      setRules(newRules);
-      await api("SAVE_RULES", { nodeId: selected, rules: newRules });
-      fetchAllData();
-    }
-  };
-
-  const openExport = () => {
-    const text = rules.map(r => `${r.name || ''} ${r.listen_port}|${r.dest_ip}|${r.dest_port}|${r.protocol}`).join('\n');
-    setImportExportModal({ isOpen: true, mode: 'export', text });
-  };
-
-  const triggerDiagnostic = (rule: any) => {
-    if (rule.listen_port.includes('-')) {
-      setDialog({
-        type: 'input',
-        title: '輸入診斷端口',
-        content: '該規則使用端口區間，請輸入具體需要診斷的本地端口號：',
-        inputPlaceholder: '例如: 8080',
-        confirmText: '開始診斷',
-        cancelText: '取消',
-        onConfirm: (val: string) => {
-          const [start, end] = rule.listen_port.split('-').map(Number);
-          const p = Number(val);
-          if (!val || isNaN(p) || p < start || p > end) {
-            alert(`請輸入 ${start} 到 ${end} 之間的有效數字`); // 這裡可以用狀態維護錯誤，簡化用 alert
-            return false;
+      if (fails.length > 0) {
+        setAlertState({
+          isOpen: true,
+          title: "導入報告",
+          type: successCount > 0 ? "info" : "error",
+          message: (
+            <div className="space-y-2 text-sm">
+              <p>檢測到 {lines.length} 條規則，成功導入 <span className="text-green-500 font-bold">{successCount}</span> 條，失敗 <span className="text-red-500 font-bold">{fails.length}</span> 條。</p>
+              <div className="bg-red-50 dark:bg-red-900/10 p-3 rounded-xl max-h-32 overflow-y-auto">
+                <ul className="list-disc pl-4 space-y-1 text-red-600 dark:text-red-400 text-xs">
+                  {fails.map((f, i) => <li key={i}>{f}</li>)}
+                </ul>
+              </div>
+            </div>
+          ),
+          onConfirm: async () => {
+             if(successCount > 0) {
+                 setRules(newRules);
+                 await api("SAVE_RULES", { nodeId: selected, rules: newRules });
+                 fetchAllData();
+             }
+             setImportExportState(null);
           }
-          setDialog(null);
-          runDiagnostic(rule, val);
-        }
-      });
-    } else {
-      runDiagnostic(rule, rule.listen_port);
+        });
+      } else {
+        setRules(newRules);
+        api("SAVE_RULES", { nodeId: selected, rules: newRules }).then(() => {
+          fetchAllData();
+          setImportExportState(null);
+          setAlertState({ isOpen: true, title: "導入成功", type: "success", message: `成功導入 ${successCount} 條規則。` });
+        });
+      }
     }
   };
 
-  const runDiagnostic = (rule: any, port: string) => {
-    const node = nodes.find((n: any) => n.id === selected);
-    const target = `${rule.dest_ip}:${rule.dest_port}`;
-    const path = `入口(${node?.name}) → 目標(${target})`;
-
-    setDiagnostic({ isRunning: true, rule, port, path, results: null });
-
-    // 模擬後端/代理節點的診斷延遲
-    setTimeout(() => {
-      const isSuccess = Math.random() > 0.3; // 模擬 70% 成功率
-      setDiagnostic((prev: any) => ({
-        ...prev,
-        isRunning: false,
-        results: {
-          status: isSuccess ? '成功' : '超時',
-          latency: isSuccess ? Math.floor(Math.random() * 100) + 10 : '-',
-          loss: isSuccess ? '0.0%' : '100%',
-          quality: isSuccess ? '很好' : '失敗'
-        }
-      }));
-    }, 1500);
+  // 診斷測試模擬
+  const runDiagnostic = async (portToTest: string) => {
+    if (!diagnosticState) return;
+    setDiagnosticState({ ...diagnosticState, status: 'testing', testPort: portToTest });
+    
+    // 模擬網路延遲與超時
+    const start = Date.now();
+    try {
+      const nodeIp = nodes.find((n:any) => n.id === selected)?.ip || "127.0.0.1";
+      await fetch(`http://${nodeIp}:${portToTest}`, { mode: 'no-cors', cache: 'no-cache', signal: AbortSignal.timeout(3000) });
+      const latency = Date.now() - start;
+      setDiagnosticState(prev => prev ? { ...prev, status: 'result', result: { status: '成功', latency, loss: '0.0%', quality: '良好' } } : null);
+    } catch (e) {
+       // 模擬超時/失敗 (無服務時超時為正常)
+       setDiagnosticState(prev => prev ? { ...prev, status: 'result', result: { status: '超時/失敗', latency: '>3000', loss: '100%', quality: '無響應' } } : null);
+    }
   };
 
-  if (nodes.length === 0) return <div className="text-center py-10">請先添加節點</div>;
+  if (nodes.length === 0) return <div className="text-center py-10 font-bold text-gray-400">請先添加節點</div>;
 
   const protocolOptions =[
     { label: "TCP", value: "tcp" },
@@ -923,187 +927,214 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
 
   return (
     <div className="space-y-6">
-      <div className="flex overflow-x-auto gap-2 pb-2 hide-scrollbar">
-        {nodes.map((n: any) => (
-          <motion.button 
-            whileTap={{ scale: 0.95 }} 
-            key={n.id} 
-            onClick={() => setSelected(n.id)} 
-            className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap transition-colors ${selected === n.id ? 'bg-[var(--md-primary)] text-[var(--md-on-primary)]' : 'bg-[#F0F4EF] dark:bg-[#202522]'}`}
-          >
-            {n.name}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex overflow-x-auto gap-2 pb-2 hide-scrollbar flex-1">
+          {nodes.map((n: any) => (
+            <motion.button 
+              whileTap={{ scale: 0.95 }} 
+              key={n.id} 
+              onClick={() => setSelected(n.id)} 
+              className={`px-6 py-2.5 rounded-full font-bold whitespace-nowrap transition-colors ${selected === n.id ? 'bg-[var(--md-primary)] text-[var(--md-on-primary)] shadow-md' : 'bg-[#F0F4EF] dark:bg-[#202522] text-gray-600 dark:text-gray-300'}`}
+            >
+              {n.name}
+            </motion.button>
+          ))}
+        </div>
+        
+        {/* 工具列 */}
+        <div className="flex items-center gap-2 bg-[#F0F4EF] dark:bg-[#202522] p-1.5 rounded-full self-start md:self-auto shrink-0">
+          <motion.button whileTap={{ scale: 0.9 }} onClick={() => setImportExportState({ isOpen: true, mode: 'import', text: "" })} className="p-2.5 text-gray-500 hover:text-[var(--md-primary)] rounded-full hover:bg-white dark:hover:bg-[#303633] transition-colors" title="批量導入">
+             <Upload className="w-4 h-4" />
           </motion.button>
-        ))}
+          <motion.button whileTap={{ scale: 0.9 }} onClick={() => {
+              const text = rules.map(r => `${r.name || ""} ${r.listen_port}|${r.dest_ip}|${r.dest_port}|${r.protocol}`).join("\n");
+              setImportExportState({ isOpen: true, mode: 'export', text });
+          }} className="p-2.5 text-gray-500 hover:text-[var(--md-primary)] rounded-full hover:bg-white dark:hover:bg-[#303633] transition-colors" title="批量導出">
+             <Download className="w-4 h-4" />
+          </motion.button>
+          <div className="w-[1px] h-6 bg-gray-300 dark:bg-gray-700 mx-1" />
+          <motion.button whileTap={{ scale: 0.9 }} onClick={() => setViewMode('card')} className={`p-2.5 rounded-full transition-colors ${viewMode === 'card' ? 'bg-white dark:bg-[#303633] text-[var(--md-primary)] shadow-sm' : 'text-gray-500 hover:text-[var(--md-primary)]'}`}>
+             <LayoutGrid className="w-4 h-4" />
+          </motion.button>
+          <motion.button whileTap={{ scale: 0.9 }} onClick={() => setViewMode('table')} className={`p-2.5 rounded-full transition-colors ${viewMode === 'table' ? 'bg-white dark:bg-[#303633] text-[var(--md-primary)] shadow-sm' : 'text-gray-500 hover:text-[var(--md-primary)]'}`}>
+             <List className="w-4 h-4" />
+          </motion.button>
+        </div>
       </div>
 
       <div className="bg-[#F0F4EF] dark:bg-[#202522] p-5 rounded-[32px] space-y-4">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center px-2 gap-4">
-          <span className="font-bold text-lg">轉發規則</span>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex bg-white dark:bg-[#111318] rounded-full p-1 shadow-sm border border-gray-100 dark:border-white/5">
-              <button onClick={() => setViewMode('card')} className={`p-2 rounded-full transition-colors ${viewMode === 'card' ? 'bg-[var(--md-primary-container)] text-[var(--md-primary)]' : 'text-gray-400'}`}><LayoutGrid className="w-4 h-4" /></button>
-              <button onClick={() => setViewMode('table')} className={`p-2 rounded-full transition-colors ${viewMode === 'table' ? 'bg-[var(--md-primary-container)] text-[var(--md-primary)]' : 'text-gray-400'}`}><List className="w-4 h-4" /></button>
-            </div>
-            <motion.button whileTap={{ scale: 0.9 }} onClick={() => setImportExportModal({ isOpen: true, mode: 'import', text: '' })} className="text-gray-600 dark:text-gray-300 bg-white dark:bg-[#111318] p-2.5 rounded-full shadow-sm"><Download className="w-4 h-4" /></motion.button>
-            <motion.button whileTap={{ scale: 0.9 }} onClick={openExport} className="text-gray-600 dark:text-gray-300 bg-white dark:bg-[#111318] p-2.5 rounded-full shadow-sm"><Upload className="w-4 h-4" /></motion.button>
-            <motion.button 
-              whileTap={{ scale: 0.9 }} 
-              onClick={() => setEditing({ index: -1, targetNodeId: selected, rule: { name: "", listen_port: "", dest_ip: "", dest_port: "", protocol: "tcp" } })} 
-              className="text-[var(--md-primary)] font-bold bg-[var(--md-primary-container)] px-5 py-2.5 rounded-full text-sm flex items-center gap-1"
-            >
-              <span className="text-lg leading-none">+</span> 添加規則
-            </motion.button>
-          </div>
+        <div className="flex justify-between items-center px-2">
+          <span className="font-bold text-lg">轉發規則 <span className="text-gray-400 text-sm ml-2">({rules.length})</span></span>
+          <motion.button 
+            whileTap={{ scale: 0.9 }} 
+            onClick={() => setEditing({ index: -1, rule: { name: "", listen_port: "", dest_ip: "", dest_port: "", protocol: "tcp", nodeId: selected } })} 
+            className="text-[var(--md-on-primary)] font-bold bg-[var(--md-primary)] px-5 py-2.5 rounded-full text-sm flex items-center gap-1 shadow-md hover:shadow-lg transition-shadow"
+          >
+            <span className="text-lg leading-none">+</span> 添加規則
+          </motion.button>
         </div>
         
         {rules.length === 0 ? (
-          <div className="text-center py-10 text-gray-400 text-sm font-bold">暫無規則，請點擊上方按鈕添加或導入</div>
+          <div className="text-center py-12 text-gray-400 text-sm font-bold bg-white/50 dark:bg-[#111318]/50 rounded-[24px] border border-dashed border-gray-300 dark:border-gray-700">
+            暫無規則，請點擊上方按鈕添加或導入
+          </div>
         ) : viewMode === 'card' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <AnimatePresence>
               {rules.map((r: any, idx: number) => (
-                <motion.div layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} key={idx} className="bg-white dark:bg-[#111318] p-5 rounded-[24px] shadow-sm border border-gray-100 dark:border-white/5 space-y-4">
+                <motion.div 
+                  layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}
+                  key={idx} 
+                  className="bg-white dark:bg-[#111318] p-5 rounded-[24px] shadow-sm hover:shadow-md border border-gray-100 dark:border-white/5 flex flex-col justify-between gap-4 transition-shadow group relative overflow-hidden"
+                >
+                  <div className="absolute top-0 left-0 w-1 h-full bg-[var(--md-primary)] opacity-50 group-hover:opacity-100 transition-opacity" />
+                  
                   <div className="flex justify-between items-start">
-                    <div>
-                      <h4 className="font-bold text-gray-800 dark:text-gray-200">{r.name}</h4>
-                      <div className="inline-flex items-center mt-1 px-2.5 py-1 rounded-lg bg-[#F0F4EF] dark:bg-[#202522] text-xs font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wider">
+                    <div className="space-y-1">
+                      <div className="font-bold text-gray-800 dark:text-gray-200">{r.name || `規則 ${idx + 1}`}</div>
+                      <div className="inline-flex items-center px-2 py-0.5 rounded-md bg-[var(--md-primary-container)] text-[var(--md-primary)] text-xs font-bold uppercase tracking-wider">
                         {r.protocol === "tcp,udp" ? "TCP+UDP" : r.protocol}
                       </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <motion.button whileTap={{ scale: 0.9 }} onClick={() => triggerDiagnostic(r)} className="p-2.5 bg-blue-50 text-blue-500 dark:bg-blue-900/20 rounded-2xl" title="診斷"><Activity className="w-4 h-4" /></motion.button>
-                      <motion.button whileTap={{ scale: 0.9 }} onClick={() => setEditing({ index: idx, targetNodeId: selected, rule: { ...r } })} className="p-2.5 bg-[var(--md-primary-container)] text-[var(--md-primary)] rounded-2xl"><Edit2 className="w-4 h-4" /></motion.button>
-                      <motion.button whileTap={{ scale: 0.9 }} onClick={() => handleDelete(idx)} className="p-2.5 bg-red-50 text-red-500 dark:bg-red-900/20 rounded-2xl"><Trash2 className="w-4 h-4" /></motion.button>
+                    <motion.button whileTap={{ scale: 0.9 }} onClick={() => setDiagnosticState({ isOpen: true, rule: r, status: 'input' })} className="p-2 bg-blue-50 text-blue-500 dark:bg-blue-900/20 dark:text-blue-400 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors" title="診斷">
+                      <Activity className="w-4 h-4" />
+                    </motion.button>
+                  </div>
+
+                  <div className="space-y-2 bg-[#F0F4EF] dark:bg-[#202522] p-3 rounded-[16px]">
+                    <div className="flex items-center gap-2 text-sm font-mono text-gray-600 dark:text-gray-300 break-all">
+                      <span className="font-bold shrink-0">來源:</span> <span className="font-black text-black dark:text-white">{r.listen_port}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm font-mono text-gray-600 dark:text-gray-300 break-all">
+                      <span className="font-bold shrink-0">目標:</span> {r.dest_ip}:{r.dest_port}
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 bg-gray-50 dark:bg-[#202522] p-3 rounded-[16px]">
-                    <span className="text-lg font-mono font-black">{r.listen_port}</span>
-                    <span className="text-gray-400">→</span>
-                    <span className="text-sm font-mono font-bold text-gray-700 dark:text-gray-300 break-all">{r.dest_ip}:{r.dest_port}</span>
+                  
+                  <div className="flex justify-end items-center gap-2 pt-1">
+                    <motion.button whileTap={{ scale: 0.9 }} onClick={() => setEditing({ index: idx, rule: { ...r, nodeId: selected } })} className="px-4 py-2 bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300 rounded-xl text-sm font-bold flex items-center gap-1.5 hover:bg-gray-200 dark:hover:bg-white/20 transition-colors">
+                      <Edit2 className="w-3.5 h-3.5" /> 編輯
+                    </motion.button>
+                    <motion.button whileTap={{ scale: 0.9 }} onClick={() => confirmDelete(idx)} className="px-4 py-2 bg-red-50 text-red-500 dark:bg-red-900/20 dark:text-red-400 rounded-xl text-sm font-bold flex items-center gap-1.5 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors">
+                      <Trash2 className="w-3.5 h-3.5" /> 刪除
+                    </motion.button>
                   </div>
                 </motion.div>
               ))}
             </AnimatePresence>
           </div>
         ) : (
-          <div className="bg-white dark:bg-[#111318] rounded-[24px] overflow-hidden shadow-sm border border-gray-100 dark:border-white/5 overflow-x-auto">
-            <table className="w-full text-left text-sm whitespace-nowrap">
-              <thead className="bg-gray-50 dark:bg-[#202522] text-gray-500">
-                <tr>
-                  <th className="p-4 font-bold">名稱</th>
-                  <th className="p-4 font-bold">本地端口</th>
-                  <th className="p-4 font-bold">目標地址</th>
-                  <th className="p-4 font-bold">協議</th>
-                  <th className="p-4 font-bold text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rules.map((r: any, idx: number) => (
-                  <tr key={idx} className="border-b border-gray-50 dark:border-white/5 last:border-0 hover:bg-gray-50/50 dark:hover:bg-white/5 transition-colors">
-                    <td className="p-4 font-bold">{r.name}</td>
-                    <td className="p-4 font-mono font-bold">{r.listen_port}</td>
-                    <td className="p-4 font-mono text-gray-600 dark:text-gray-400">{r.dest_ip}:{r.dest_port}</td>
-                    <td className="p-4 uppercase text-xs font-bold">{r.protocol === "tcp,udp" ? "TCP+UDP" : r.protocol}</td>
-                    <td className="p-4 flex justify-end gap-2">
-                      <button onClick={() => triggerDiagnostic(r)} className="p-2 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl"><Activity className="w-4 h-4" /></button>
-                      <button onClick={() => setEditing({ index: idx, targetNodeId: selected, rule: { ...r } })} className="p-2 text-[var(--md-primary)] hover:bg-[var(--md-primary-container)] rounded-xl"><Edit2 className="w-4 h-4" /></button>
-                      <button onClick={() => handleDelete(idx)} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl"><Trash2 className="w-4 h-4" /></button>
-                    </td>
+          <div className="bg-white dark:bg-[#111318] rounded-[24px] overflow-hidden shadow-sm border border-gray-100 dark:border-white/5">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead className="bg-[#F0F4EF] dark:bg-[#202522] text-gray-500 dark:text-gray-400 font-bold">
+                  <tr>
+                    <th className="p-4 rounded-tl-[24px]">規則名稱</th>
+                    <th className="p-4">協議</th>
+                    <th className="p-4">入口端口</th>
+                    <th className="p-4">目標 IP:端口</th>
+                    <th className="p-4 text-right rounded-tr-[24px]">操作</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                  <AnimatePresence>
+                    {rules.map((r: any, idx: number) => (
+                      <motion.tr layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} key={idx} className="hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors">
+                        <td className="p-4 font-bold text-gray-800 dark:text-gray-200">{r.name || `規則 ${idx + 1}`}</td>
+                        <td className="p-4"><span className="px-2 py-1 rounded-md bg-[var(--md-primary-container)] text-[var(--md-primary)] text-xs font-bold uppercase">{r.protocol}</span></td>
+                        <td className="p-4 font-mono font-black">{r.listen_port}</td>
+                        <td className="p-4 font-mono text-gray-600 dark:text-gray-300">{r.dest_ip}:{r.dest_port}</td>
+                        <td className="p-4 flex justify-end gap-2">
+                          <button onClick={() => setDiagnosticState({ isOpen: true, rule: r, status: 'input' })} className="p-2 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl transition-colors"><Activity className="w-4 h-4" /></button>
+                          <button onClick={() => setEditing({ index: idx, rule: { ...r, nodeId: selected } })} className="p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10 rounded-xl transition-colors"><Edit2 className="w-4 h-4" /></button>
+                          <button onClick={() => confirmDelete(idx)} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors"><Trash2 className="w-4 h-4" /></button>
+                        </td>
+                      </motion.tr>
+                    ))}
+                  </AnimatePresence>
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
 
-      {/* 編輯規則 Modal (完美復刻圖1排版，修復菜單遮擋) */}
+      {/* 編輯/添加規則彈窗 (遵循圖2排版) */}
       <AnimatePresence>
         {editing && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => !isSaving && setEditing(null)} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
             
-            {/* 這裡不能加 overflow-hidden，否則會切斷絕對定位的下拉菜單 */}
-            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="relative w-full max-w-lg bg-white dark:bg-[#111318] rounded-[32px] shadow-2xl flex flex-col">
-              <div className="p-6 space-y-6">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-xl font-bold">{editing.index === -1 ? "添加新規則" : "編輯規則"}</h3>
-                  <button onClick={() => !isSaving && setEditing(null)} className="p-2 bg-gray-100 dark:bg-white/10 rounded-full hover:scale-105 transition-transform"><X className="w-5 h-5" /></button>
+            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="relative w-full max-w-lg bg-white dark:bg-[#111318] rounded-[32px] shadow-2xl flex flex-col max-h-[90vh]">
+              
+              <div className="flex justify-between items-center p-6 pb-4 border-b border-gray-100 dark:border-white/5 shrink-0">
+                <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100">{editing.index === -1 ? "添加新規則" : "編輯規則"}</h3>
+                <button onClick={() => !isSaving && setEditing(null)} className="p-2 bg-gray-100 dark:bg-white/10 rounded-full hover:scale-105 transition-transform text-gray-600 dark:text-gray-300">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-5 overflow-y-auto hide-scrollbar">
+                
+                <div className="space-y-1.5">
+                  <label className="text-sm font-bold text-gray-500 ml-1">自定義名稱 (選填)</label>
+                  <input value={editing.rule.name || ""} onChange={e => setEditing({ ...editing, rule: { ...editing.rule, name: e.target.value } })} className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-bold text-sm outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow placeholder-gray-400" placeholder="留空將自動生成名稱" />
                 </div>
 
-                <div className="space-y-4">
-                  {/* Row 1: 備註名稱 */}
+                <div className="space-y-1.5 relative z-20">
+                  <label className="text-sm font-bold text-gray-500 ml-1">歸屬節點</label>
+                  <div onClick={() => setIsNodeSelectOpen(!isNodeSelectOpen)} className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] text-sm font-bold flex justify-between items-center cursor-pointer outline-none hover:ring-2 ring-[var(--md-primary)]/50 transition-shadow">
+                    <span>{nodes.find((n:any) => n.id === editing.rule.nodeId)?.name || "選擇節點"}</span>
+                    <motion.div animate={{ rotate: isNodeSelectOpen ? 180 : 0 }}><ChevronDown className="w-5 h-5 text-gray-500" /></motion.div>
+                  </div>
+                  <AnimatePresence>
+                    {isNodeSelectOpen && (
+                      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-[#2a2f2c] rounded-[20px] shadow-xl border border-gray-100 dark:border-white/5 overflow-hidden z-50 max-h-48 overflow-y-auto">
+                        {nodes.map((n:any) => (
+                          <div key={n.id} onClick={() => { setEditing({ ...editing, rule: { ...editing.rule, nodeId: n.id } }); setIsNodeSelectOpen(false); }} className={`p-4 hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer font-bold text-sm transition-colors ${editing.rule.nodeId === n.id ? 'text-[var(--md-primary)] bg-[var(--md-primary-container)]' : ''}`}>{n.name}</div>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 relative z-10">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-gray-500 ml-1">自定義名稱 (選填)</label>
-                    <input value={editing.rule.name} onChange={e => setEditing({ ...editing, rule: { ...editing.rule, name: e.target.value } })} className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] text-sm outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow" placeholder="留空將自動生成名稱" />
+                    <label className="text-sm font-bold text-gray-500 ml-1">本地端口/區間</label>
+                    <input value={editing.rule.listen_port} onChange={e => setEditing({ ...editing, rule: { ...editing.rule, listen_port: e.target.value } })} className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow placeholder-gray-400" placeholder="如 8080 或 1000-2000" />
                   </div>
                   
-                  {/* Row 2: 歸屬節點 */}
                   <div className="space-y-1.5 relative">
-                    <label className="text-xs font-bold text-gray-500 ml-1">歸屬節點</label>
-                    <div onClick={() => setOpenDropdown(openDropdown === 'node' ? null : 'node')} className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] text-sm font-bold flex justify-between items-center cursor-pointer outline-none focus:ring-2 ring-[var(--md-primary)]">
-                      <span>{nodes.find((n: any) => n.id === editing.targetNodeId)?.name || "選擇節點"}</span>
-                      <motion.div animate={{ rotate: openDropdown === 'node' ? 180 : 0 }}><ChevronDown className="w-5 h-5 text-gray-500" /></motion.div>
+                    <label className="text-sm font-bold text-gray-500 ml-1">協議</label>
+                    <div onClick={() => setIsProtocolSelectOpen(!isProtocolSelectOpen)} className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] text-sm font-bold flex justify-between items-center cursor-pointer outline-none hover:ring-2 ring-[var(--md-primary)]/50 transition-shadow">
+                      <span>{protocolOptions.find(o => o.value === editing.rule.protocol)?.label || "TCP"}</span>
+                      <motion.div animate={{ rotate: isProtocolSelectOpen ? 180 : 0 }}><ChevronDown className="w-5 h-5 text-gray-500" /></motion.div>
                     </div>
                     <AnimatePresence>
-                      {openDropdown === 'node' && (
-                        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-[#2a2f2c] rounded-[20px] shadow-xl border border-gray-100 dark:border-white/5 overflow-hidden z-[150]">
-                          <div className="max-h-48 overflow-y-auto custom-scrollbar">
-                            {nodes.map((n: any) => (
-                              <div key={n.id} onClick={() => { setEditing({ ...editing, targetNodeId: n.id }); setOpenDropdown(null); }} className={`p-4 hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer font-bold text-sm transition-colors ${editing.targetNodeId === n.id ? 'text-[var(--md-primary)] bg-[var(--md-primary-container)]' : ''}`}>
-                                {n.name}
-                              </div>
-                            ))}
-                          </div>
+                      {isProtocolSelectOpen && (
+                        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-[#2a2f2c] rounded-[20px] shadow-xl border border-gray-100 dark:border-white/5 overflow-hidden z-50">
+                          {protocolOptions.map(o => (
+                            <div key={o.value} onClick={() => { setEditing({ ...editing, rule: { ...editing.rule, protocol: o.value } }); setIsProtocolSelectOpen(false); }} className={`p-4 hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer font-bold text-sm transition-colors ${editing.rule.protocol === o.value ? 'text-[var(--md-primary)] bg-[var(--md-primary-container)]' : ''}`}>{o.label}</div>
+                          ))}
                         </motion.div>
                       )}
                     </AnimatePresence>
                   </div>
+                </div>
 
-                  {/* Row 3: 本地端口 & 協議 (並排) */}
-                  <div className="flex gap-4">
-                    <div className="flex-1 space-y-1.5">
-                      <label className="text-xs font-bold text-gray-500 ml-1">本地端口/區間</label>
-                      <input value={editing.rule.listen_port} onChange={e => setEditing({ ...editing, rule: { ...editing.rule, listen_port: e.target.value } })} className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow" placeholder="如 8080 或 1000-2000" />
-                    </div>
-                    <div className="flex-1 space-y-1.5 relative">
-                      <label className="text-xs font-bold text-gray-500 ml-1">協議</label>
-                      <div onClick={() => setOpenDropdown(openDropdown === 'protocol' ? null : 'protocol')} className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] text-sm font-bold flex justify-between items-center cursor-pointer outline-none focus:ring-2 ring-[var(--md-primary)]">
-                        <span>{protocolOptions.find(o => o.value === editing.rule.protocol)?.label}</span>
-                        <motion.div animate={{ rotate: openDropdown === 'protocol' ? 180 : 0 }}><ChevronDown className="w-5 h-5 text-gray-500" /></motion.div>
-                      </div>
-                      <AnimatePresence>
-                        {openDropdown === 'protocol' && (
-                          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-[#2a2f2c] rounded-[20px] shadow-xl border border-gray-100 dark:border-white/5 overflow-hidden z-[150]">
-                            {protocolOptions.map(o => (
-                              <div key={o.value} onClick={() => { setEditing({ ...editing, rule: { ...editing.rule, protocol: o.value } }); setOpenDropdown(null); }} className={`p-4 hover:bg-gray-50 dark:hover:bg-white/5 cursor-pointer font-bold text-sm transition-colors ${editing.rule.protocol === o.value ? 'text-[var(--md-primary)] bg-[var(--md-primary-container)]' : ''}`}>
-                                {o.label}
-                              </div>
-                            ))}
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-bold text-gray-500 ml-1">目標 IP</label>
+                  <input value={editing.rule.dest_ip} onChange={e => setEditing({ ...editing, rule: { ...editing.rule, dest_ip: e.target.value } })} className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow placeholder-gray-400" placeholder="IPv4/IPv6 或 域名" />
+                </div>
 
-                  {/* Row 4: 目標 IP */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-gray-500 ml-1">目標 IP</label>
-                    <input value={editing.rule.dest_ip} onChange={e => setEditing({ ...editing, rule: { ...editing.rule, dest_ip: e.target.value } })} className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow" placeholder="IPv4/IPv6 或 域名" />
-                  </div>
-
-                  {/* Row 5: 目標端口 */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-gray-500 ml-1">目標端口 (對應本地)</label>
-                    <input value={editing.rule.dest_port} onChange={e => setEditing({ ...editing, rule: { ...editing.rule, dest_port: e.target.value } })} className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow" placeholder="如 80 或 1000-2000" />
-                  </div>
+                <div className="space-y-1.5 border-b border-transparent pb-4">
+                  <label className="text-sm font-bold text-gray-500 ml-1">目標端口 (對應本地)</label>
+                  <input value={editing.rule.dest_port} onChange={e => setEditing({ ...editing, rule: { ...editing.rule, dest_port: e.target.value } })} className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow placeholder-gray-400" placeholder="如 80 或 1000-2000" />
                 </div>
               </div>
 
-              {/* Row 6: 按鈕 */}
-              <div className="p-6 pt-2 flex gap-3">
-                <button onClick={() => setEditing(null)} disabled={isSaving} className="flex-1 py-3.5 rounded-full font-bold bg-[#F0F4EF] text-gray-700 dark:bg-white/5 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-white/10 transition-colors disabled:opacity-50">取消</button>
-                <button onClick={handleSave} disabled={isSaving} className="flex-1 py-3.5 rounded-full font-bold bg-[#005ea2] dark:bg-[var(--md-primary)] text-white dark:text-[var(--md-on-primary)] hover:opacity-90 transition-opacity flex justify-center items-center gap-2 disabled:opacity-70 shadow-md">
+              <div className="p-6 pt-4 border-t border-gray-100 dark:border-white/5 flex gap-4 shrink-0">
+                <button onClick={() => setEditing(null)} disabled={isSaving} className="flex-1 py-4 rounded-full font-bold bg-[#F0F4EF] dark:bg-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-white/20 transition-colors disabled:opacity-50">取消</button>
+                <button onClick={handleSave} disabled={isSaving} className="flex-1 py-4 rounded-full font-bold bg-[var(--md-primary)] text-[var(--md-on-primary)] hover:opacity-90 transition-opacity flex justify-center items-center gap-2 shadow-md disabled:opacity-70">
                   {isSaving ? <><Loader2 className="w-5 h-5 animate-spin" /><span>保存中...</span></> : <span>保存規則</span>}
                 </button>
               </div>
@@ -1112,124 +1143,149 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
         )}
       </AnimatePresence>
 
-      {/* 導入導出 Modal */}
+      {/* 導入導出彈窗 */}
       <AnimatePresence>
-        {importExportModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setImportExportModal(null)} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative w-full max-w-2xl bg-white dark:bg-[#111318] rounded-[32px] p-6 shadow-2xl flex flex-col gap-4">
-              <h3 className="text-xl font-bold">{importExportModal.mode === 'import' ? '批量導入規則' : '批量導出規則'}</h3>
-              <p className="text-sm text-gray-500 font-bold">格式要求：自定義名稱(可選) 本地端口|目標IP|目標端口|協議 (每行一條)</p>
-              <textarea 
-                value={importExportModal.text} 
-                onChange={(e) => setImportExportModal({ ...importExportModal, text: e.target.value })} 
-                readOnly={importExportModal.mode === 'export'}
-                className="w-full h-64 bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] resize-none"
-                placeholder="例如:&#13;&#10;網頁代理 80|192.168.1.1|8080|tcp&#13;&#10;1000-2000|10.0.0.1|1000-2000|tcp,udp"
-              />
-              <div className="flex gap-3 mt-2">
-                <button onClick={() => setImportExportModal(null)} className="flex-1 py-3.5 rounded-full font-bold bg-[#F0F4EF] dark:bg-white/5 hover:bg-gray-200 transition-colors">取消</button>
-                {importExportModal.mode === 'import' ? (
-                  <button onClick={handleBatchImport} className="flex-1 py-3.5 rounded-full font-bold bg-[var(--md-primary)] text-[var(--md-on-primary)] flex justify-center items-center gap-2 shadow-md hover:opacity-90"><Save className="w-5 h-5"/>確認導入</button>
-                ) : (
-                  <button onClick={() => { navigator.clipboard.writeText(importExportModal.text); alert("已複製到剪貼簿"); }} className="flex-1 py-3.5 rounded-full font-bold bg-[var(--md-primary)] text-[var(--md-on-primary)] flex justify-center items-center gap-2 shadow-md hover:opacity-90"><Save className="w-5 h-5"/>複製全部</button>
-                )}
+        {importExportState && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setImportExportState(null)} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative w-full max-w-lg bg-white dark:bg-[#111318] rounded-[32px] shadow-2xl overflow-hidden flex flex-col">
+              <div className="p-6 space-y-4">
+                <h3 className="text-xl font-bold">{importExportState.mode === 'import' ? '批量導入規則' : '批量導出規則'}</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400">格式：自定義名稱（可選） 原端口/端口區間|目標IP|目標端口|協議</p>
+                <textarea 
+                  value={importExportState.text} 
+                  onChange={e => setImportExportState({ ...importExportState, text: e.target.value })} 
+                  className="w-full h-48 bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)] resize-none" 
+                  placeholder="示例: 我的規則 8080|1.1.1.1|80|tcp&#10;8081-8085|2.2.2.2|8081-8085|udp"
+                  readOnly={importExportState.mode === 'export'}
+                />
+              </div>
+              <div className="p-6 pt-0 flex gap-4">
+                <button onClick={() => setImportExportState(null)} className="flex-1 py-4 rounded-full font-bold bg-[#F0F4EF] dark:bg-white/10 transition-colors">取消</button>
+                <button onClick={handleImportExport} className="flex-1 py-4 rounded-full font-bold bg-[var(--md-primary)] text-[var(--md-on-primary)] transition-colors">
+                  {importExportState.mode === 'import' ? '確認導入' : '複製並關閉'}
+                </button>
               </div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
 
-      {/* 診斷結果 Modal (復刻圖2排版) */}
+      {/* 診斷功能彈窗 (圖3風格，MD3化) */}
       <AnimatePresence>
-        {diagnostic && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => !diagnostic.isRunning && setDiagnostic(null)} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="relative w-full max-w-4xl bg-[#1a1e23] border border-gray-700 rounded-[24px] shadow-2xl overflow-hidden flex flex-col text-white">
-              <div className="p-5 flex justify-between items-center bg-[#15191c] border-b border-gray-800">
+        {diagnosticState && (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => diagnosticState.status !== 'testing' && setDiagnosticState(null)} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+            
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative w-full max-w-3xl bg-[#0B0F19] border border-white/10 rounded-[32px] shadow-2xl overflow-hidden text-gray-200">
+              <div className="p-6 border-b border-white/10 flex justify-between items-center">
                 <div>
-                  <h3 className="text-xl font-bold flex items-center gap-2">轉發診斷結果</h3>
-                  <p className="text-sm text-gray-400 mt-1">{nodes.find((n: any) => n.id === selected)?.name}</p>
+                  <h3 className="text-xl font-bold text-white flex items-center gap-2">轉發診斷結果 <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-xs font-bold border border-blue-500/30">轉發服務</span></h3>
+                  <p className="text-sm text-gray-400 mt-1">{nodes.find((n:any)=>n.id===selected)?.name || "未知節點"} / {diagnosticState.rule.name}</p>
                 </div>
-                <div className="px-3 py-1 bg-blue-600 rounded-full text-xs font-bold text-white shadow-sm">轉發服務</div>
+                <button onClick={() => diagnosticState.status !== 'testing' && setDiagnosticState(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-gray-400"><X className="w-5 h-5" /></button>
               </div>
 
               <div className="p-6 space-y-6">
-                <div className="bg-[#15191c] p-4 rounded-xl flex gap-3 text-sm border border-blue-900/30 text-blue-200">
-                  <Info className="w-5 h-5 shrink-0 text-blue-400" />
-                  <p>注意：由於面板為被動模式，規則創建後請等待大約30秒讓Agent獲取並生效。當出口沒有部署對應服務時，診斷顯示超時為正常現象。</p>
+                <div className="bg-blue-900/20 border border-blue-500/20 p-4 rounded-[20px] text-xs text-blue-300 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                  <p>由於面板為被動模式，規則創建後請等大約 30 秒 agent 獲取生效。TCP ping 當出口沒有部署服務時顯示超時為正常現象。</p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="bg-[#20252b] border border-gray-700 p-5 rounded-xl flex flex-col items-center justify-center py-8">
-                    <span className="text-3xl font-black text-gray-200">1</span>
-                    <span className="text-sm text-gray-500 mt-2">總測試數</span>
+                {diagnosticState.status === 'input' && (
+                  <div className="bg-white/5 p-6 rounded-[24px] text-center space-y-4">
+                    <p className="text-gray-300 font-bold text-sm">此規則為端口區間或包含多個端口，請輸入要具體診斷的單一入口端口：</p>
+                    <input 
+                      type="text" 
+                      id="diagPortInput" 
+                      className="bg-black/50 border border-white/10 p-3 rounded-xl font-mono text-center outline-none focus:border-blue-500 w-48 text-white" 
+                      defaultValue={diagnosticState.rule.listen_port.split('-')[0]} 
+                    />
+                    <div>
+                      <button onClick={() => {
+                        const val = (document.getElementById('diagPortInput') as HTMLInputElement).value;
+                        if(/^\d+$/.test(val)) runDiagnostic(val);
+                        else setAlertState({ isOpen: true, type: 'error', title: '輸入錯誤', message: '請輸入有效的單一數字端口' });
+                      }} className="px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-bold transition-colors">開始診斷</button>
+                    </div>
                   </div>
-                  <div className="bg-[#1a2b22] border border-[#1d4c33] p-5 rounded-xl flex flex-col items-center justify-center py-8">
-                    <span className="text-3xl font-black text-[#4ade80]">{diagnostic.results?.status === '成功' ? 1 : 0}</span>
-                    <span className="text-sm text-[#4ade80]/70 mt-2">成功</span>
-                  </div>
-                  <div className="bg-[#311b1e] border border-[#7f1d1d] p-5 rounded-xl flex flex-col items-center justify-center py-8">
-                    <span className="text-3xl font-black text-[#f87171]">{diagnostic.results?.status !== '成功' && diagnostic.results ? 1 : 0}</span>
-                    <span className="text-sm text-[#f87171]/70 mt-2">失敗</span>
-                  </div>
-                </div>
+                )}
 
-                <div className="bg-[#20252b] rounded-xl border border-gray-700 overflow-hidden">
-                  <div className="bg-[#2a3038] px-4 py-3 text-sm font-bold border-b border-gray-700 flex items-center gap-2 text-blue-400">
-                    <div className="w-2 h-4 bg-orange-500 rounded-sm"></div> 入口測試
-                  </div>
-                  <table className="w-full text-left text-sm">
-                    <thead className="text-gray-400 bg-[#252a30] border-b border-gray-700">
-                      <tr>
-                        <th className="p-3 pl-4 font-normal">路徑</th>
-                        <th className="p-3 font-normal">狀態</th>
-                        <th className="p-3 font-normal">延遲(ms)</th>
-                        <th className="p-3 font-normal">丟包率</th>
-                        <th className="p-3 font-normal">質量</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr className="border-b border-gray-800 last:border-0 hover:bg-white/5 transition-colors">
-                        <td className="p-4 flex items-start gap-3">
-                          {diagnostic.isRunning ? (
-                            <Loader2 className="w-5 h-5 text-blue-400 animate-spin shrink-0" />
-                          ) : diagnostic.results?.status === '成功' ? (
-                            <CheckCircle2 className="w-5 h-5 text-[#4ade80] shrink-0" />
-                          ) : (
-                            <XCircle className="w-5 h-5 text-[#f87171] shrink-0" />
-                          )}
-                          <div className="flex flex-col">
-                            <span className="font-bold text-gray-200">{diagnostic.path}</span>
-                            <span className="text-xs text-gray-500 mt-1 font-mono">{diagnostic.rule.dest_ip}:{diagnostic.rule.dest_port}</span>
-                          </div>
-                        </td>
-                        <td className="p-4">
-                          {diagnostic.isRunning ? <span className="text-gray-400">測試中...</span> : (
-                            <span className={`px-2.5 py-1 rounded text-xs font-bold ${diagnostic.results.status === '成功' ? 'bg-[#4ade80]/20 text-[#4ade80]' : 'bg-[#f87171]/20 text-[#f87171]'}`}>
-                              {diagnostic.results.status}
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-4 font-mono text-blue-400">{diagnostic.results?.latency || '-'}</td>
-                        <td className="p-4 text-[#4ade80]">{diagnostic.results?.loss || '-'}</td>
-                        <td className="p-4">
-                          {diagnostic.results && (
-                            <span className={`px-2.5 py-1 rounded text-xs font-bold ${diagnostic.results.status === '成功' ? 'bg-[#4ade80] text-[#1a2b22]' : 'bg-[#f87171] text-[#311b1e]'}`}>
-                              ✨ {diagnostic.results.quality}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                {(diagnosticState.status === 'testing' || diagnosticState.status === 'result') && (
+                  <>
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="bg-white/5 border border-white/10 rounded-[20px] p-6 text-center">
+                         <div className="text-3xl font-black text-white">1</div>
+                         <div className="text-sm text-gray-400 mt-1">總測試數</div>
+                      </div>
+                      <div className="bg-green-900/20 border border-green-500/30 rounded-[20px] p-6 text-center">
+                         <div className="text-3xl font-black text-green-400">{diagnosticState.status === 'result' && diagnosticState.result.status === '成功' ? 1 : 0}</div>
+                         <div className="text-sm text-green-500/80 mt-1">成功</div>
+                      </div>
+                      <div className="bg-red-900/20 border border-red-500/30 rounded-[20px] p-6 text-center">
+                         <div className="text-3xl font-black text-red-400">{diagnosticState.status === 'result' && diagnosticState.result.status !== '成功' ? 1 : 0}</div>
+                         <div className="text-sm text-red-500/80 mt-1">失敗</div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white/5 border border-white/10 rounded-[20px] overflow-hidden">
+                       <div className="bg-white/5 px-4 py-3 border-b border-white/10 font-bold text-sm flex items-center gap-2 text-gray-300"><Activity className="w-4 h-4 text-blue-400"/> 入口測試</div>
+                       <table className="w-full text-left text-sm whitespace-nowrap">
+                          <thead className="bg-black/20 text-gray-500 text-xs">
+                            <tr><th className="p-4">路徑</th><th className="p-4">狀態</th><th className="p-4">延遲(ms)</th><th className="p-4">丟包率</th><th className="p-4">質量</th></tr>
+                          </thead>
+                          <tbody>
+                            {diagnosticState.status === 'testing' ? (
+                              <tr><td colSpan={5} className="p-8 text-center text-gray-400"><Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" /> 診斷中...</td></tr>
+                            ) : (
+                              <tr className="border-t border-white/5 bg-white/[0.02]">
+                                <td className="p-4">
+                                  <div className="flex items-center gap-2">
+                                    <div className={`w-2 h-2 rounded-full ${diagnosticState.result.status === '成功' ? 'bg-green-500' : 'bg-red-500'}`} />
+                                    <div>
+                                      <div className="text-gray-300 font-bold">入口 → 目標({diagnosticState.rule.dest_ip}:{diagnosticState.rule.dest_port})</div>
+                                      <div className="text-gray-500 text-xs font-mono mt-0.5">{nodes.find((n:any)=>n.id===selected)?.ip || "IP未知"}:{diagnosticState.testPort}</div>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="p-4"><span className={`px-2 py-1 rounded-md text-xs font-bold ${diagnosticState.result.status === '成功' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>{diagnosticState.result.status}</span></td>
+                                <td className="p-4 font-mono text-blue-400">{diagnosticState.result.latency}</td>
+                                <td className="p-4 text-green-400">{diagnosticState.result.loss}</td>
+                                <td className="p-4"><span className={`px-2 py-1 rounded-md text-xs font-bold ${diagnosticState.result.status === '成功' ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}`}>✨ {diagnosticState.result.quality}</span></td>
+                              </tr>
+                            )}
+                          </tbody>
+                       </table>
+                    </div>
+                  </>
+                )}
               </div>
+              <div className="p-6 bg-black/20 flex justify-end gap-3 border-t border-white/10 shrink-0">
+                <button onClick={() => setDiagnosticState(null)} className="px-6 py-2.5 rounded-full font-bold bg-white/10 hover:bg-white/20 transition-colors text-white">關閉</button>
+                {(diagnosticState.status === 'result' || diagnosticState.status === 'testing') && (
+                  <button onClick={() => runDiagnostic(diagnosticState.testPort!)} disabled={diagnosticState.status === 'testing'} className="px-6 py-2.5 rounded-full font-bold bg-blue-600 hover:bg-blue-500 transition-colors text-white disabled:opacity-50 flex items-center gap-2">
+                    {diagnosticState.status === 'testing' ? <Loader2 className="w-4 h-4 animate-spin"/> : null}
+                    重新診斷
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
-              <div className="p-4 bg-[#15191c] border-t border-gray-800 flex justify-end gap-3">
-                <button onClick={() => setDiagnostic(null)} className="px-6 py-2 rounded-lg font-bold text-gray-300 hover:bg-white/10 transition-colors">關閉</button>
-                <button onClick={() => runDiagnostic(diagnostic.rule, diagnostic.port)} disabled={diagnostic.isRunning} className="px-6 py-2 rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-500 transition-colors disabled:opacity-50 flex items-center gap-2">
-                  重新診斷
+      {/* 消息提示彈窗 (Alert) */}
+      <AnimatePresence>
+        {alertState.isOpen && (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => { setAlertState({ ...alertState, isOpen: false }); alertState.onConfirm?.(); }} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative w-full max-w-sm bg-white dark:bg-[#1A1C19] rounded-[28px] p-6 shadow-2xl">
+              <div className="flex flex-col items-center text-center space-y-4">
+                {alertState.type === 'error' ? <XCircle className="w-12 h-12 text-red-500" /> : alertState.type === 'success' ? <CheckCircle2 className="w-12 h-12 text-green-500" /> : <AlertCircle className="w-12 h-12 text-blue-500" />}
+                <h3 className="text-xl font-bold">{alertState.title}</h3>
+                <div className="text-gray-600 dark:text-gray-300 text-sm w-full text-left bg-gray-50 dark:bg-white/5 p-4 rounded-2xl">{alertState.message}</div>
+                <button onClick={() => { setAlertState({ ...alertState, isOpen: false }); alertState.onConfirm?.(); }} className="w-full py-3.5 rounded-full font-bold bg-[var(--md-primary)] text-[var(--md-on-primary)] hover:opacity-90 transition-opacity">
+                  {alertState.onConfirm ? "返回編輯區" : "確定"}
                 </button>
               </div>
             </motion.div>
@@ -1237,41 +1293,17 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
         )}
       </AnimatePresence>
 
-      {/* 通用 MD3 對話框 (用於刪除確認、錯誤提示、輸入端點等) */}
+      {/* 確認刪除彈窗 (Confirm) */}
       <AnimatePresence>
-        {dialog && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => dialog.onCancel?.()} />
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative w-full max-w-sm bg-white dark:bg-[#111318] rounded-[28px] p-6 shadow-2xl space-y-4">
-              <div className="flex items-start gap-4">
-                {dialog.isDanger ? <AlertCircle className="w-8 h-8 text-red-500 shrink-0" /> : <Info className="w-8 h-8 text-[var(--md-primary)] shrink-0" />}
-                <div className="space-y-2 w-full">
-                  <h3 className="text-xl font-bold">{dialog.title}</h3>
-                  <div className="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap leading-relaxed">{dialog.content}</div>
-                  
-                  {dialog.type === 'input' && (
-                    <input 
-                      autoFocus
-                      className="w-full mt-3 bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[16px] font-mono text-sm outline-none focus:ring-2 ring-[var(--md-primary)]" 
-                      placeholder={dialog.inputPlaceholder}
-                      onChange={(e) => dialog.inputValue = e.target.value}
-                    />
-                  )}
-                </div>
-              </div>
-              
-              <div className="flex justify-end gap-2 pt-4">
-                {dialog.cancelText && (
-                  <button onClick={() => dialog.onCancel ? dialog.onCancel() : setDialog(null)} className="px-5 py-2.5 rounded-full font-bold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10 transition-colors">
-                    {dialog.cancelText}
-                  </button>
-                )}
-                <button 
-                  onClick={() => dialog.onConfirm ? dialog.onConfirm(dialog.type === 'input' ? dialog.inputValue : undefined) : setDialog(null)} 
-                  className={`px-5 py-2.5 rounded-full font-bold transition-colors ${dialog.isDanger ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-[var(--md-primary)] text-[var(--md-on-primary)] hover:opacity-90'}`}
-                >
-                  {dialog.confirmText || "確定"}
-                </button>
+        {confirmState && (
+          <div className="fixed inset-0 z-[140] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setConfirmState(null)} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative w-full max-w-sm bg-white dark:bg-[#1A1C19] rounded-[28px] p-6 shadow-2xl">
+              <h3 className="text-xl font-bold mb-2">{confirmState.title}</h3>
+              <p className="text-gray-600 dark:text-gray-300 text-sm mb-6">{confirmState.message}</p>
+              <div className="flex gap-3">
+                <button onClick={() => setConfirmState(null)} className="flex-1 py-3 rounded-full font-bold bg-gray-100 dark:bg-white/10 hover:bg-gray-200 transition-colors">取消</button>
+                <button onClick={confirmState.onConfirm} className="flex-1 py-3 rounded-full font-bold bg-red-500 text-white hover:bg-red-600 transition-colors">刪除</button>
               </div>
             </motion.div>
           </div>
