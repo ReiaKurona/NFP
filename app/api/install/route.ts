@@ -97,7 +97,7 @@ cat > config.json <<EOF
 { "token": "$TOKEN", "node_id": "$NODE_ID", "panel_url": "$PANEL_URL", "nft_bin": "$NFT_BIN" }
 EOF
 
-AGENT_URL="https://raw.githubusercontent.com/ReiaKurona/NFP/refs/heads/main/app/api/agent/agent.py"
+AGENT_URL="https://raw.githubusercontent.com/ReiaKurona/NFP/refs/heads/main/app/agent/agent.py"
 
 echo -e "\${BLUE}正在從遠端下載 agent.py...\${NC}"
 if command -v curl &> /dev/null; then
