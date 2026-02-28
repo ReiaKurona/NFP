@@ -18,7 +18,7 @@ try:
 except: sys.exit(1) # 讀取失敗直接退出
 
 # 拼接用於獲取轉發規則的 API URL
-CONFIG_URL = f"{CONFIG['panel_url']}/api?action=DOWNLOAD_CONFIG&node_id={CONFIG['node_id']}&token={CONFIG['token']}"
+CONFIG_URL = f"{CONFIG['panel_url']}/api/agent?action=DOWNLOAD_CONFIG&node_id={CONFIG['node_id']}&token={CONFIG['token']}"
 
 # --- 系統資源與流量監控模塊 ---
 class Monitor:
