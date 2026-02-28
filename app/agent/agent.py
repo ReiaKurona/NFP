@@ -160,7 +160,7 @@ def loop():
     last_sync = time.time()
     
     while True:
-        interval = 30 # 默認心跳間隔 30 秒
+        interval = 60 # 默認心跳間隔 60 秒
         try:
             # 構建心跳數據包（包含節點認證和系統狀態）
             payload = { "nodeId": CONFIG["node_id"], "token": CONFIG["token"], "stats": monitor.get_stats() }
