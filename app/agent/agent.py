@@ -166,7 +166,7 @@ def loop():
             payload = { "nodeId": CONFIG["node_id"], "token": CONFIG["token"], "stats": monitor.get_stats() }
             # 轉為 JSON 後進行 Base64 編碼，再進行 URL 編碼
             b64 = base64.b64encode(json.dumps(payload).encode()).decode()
-            url = f"{CONFIG['panel_url']}/api?action=HEARTBEAT&data={urllib.parse.quote(b64)}"
+            url = f"{CONFIG['panel_url']}/agent?action=HEARTBEAT&data={urllib.parse.quote(b64)}"
             req = urllib.request.Request(url, headers={'User-Agent': 'AeroAgent/8.0'})
             
             # 發送心跳請求
