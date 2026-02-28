@@ -79,7 +79,8 @@ AeroNode 是一款基於 Linux `nftables` 的現代化、高性能、無服務�
 1. 將本項目 Fork 或上傳至你的 GitHub 倉庫。
 2. 登入 [Vercel](https://vercel.com/)，點擊 **Add New -> Project**，導入你的倉庫。
 3. 等待首次部署完成後，進入 Vercel 該項目的控制台。
-4. 點擊頂部導航欄的 **Storage** -> **Create Database** -> 選擇 **KV (Redis)** 並創建。
+4. 點擊頂部導航欄的 **Storage** -> **Create Database** -> 選擇 **連接
+upstash redis KV (Redis)** 並創建。
 5. 將創建好的 KV 數據庫連接 (Connect) 到你的 AeroNode 項目中，Vercel 會自動注入環境變量。
 6. 回到 **Deployments** 頁面，點擊最近的一次部署，選擇 **Redeploy** 讓數據庫環境變量生效。
 
