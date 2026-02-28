@@ -10,7 +10,7 @@ import {
   Palette, PauseCircle, Download, Upload, KeyRound, Save, Terminal,
   Edit2,X,ChevronDown,Loader2,LayoutGrid, List as ListIcon, AlertCircle, 
   CheckCircle2, Copy,List,Plus,ArrowRight,Globe,Activity,Table2,FileText,
-  CheckCircle
+  CheckCircle,Grid
 } from "lucide-react";
 
 const THEMES = {
