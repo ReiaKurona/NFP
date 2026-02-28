@@ -703,22 +703,17 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
   const [isSaving, setIsSaving] = useState(false);
   const[viewMode, setViewMode] = useState<'card' | 'table'>('card');
   
-  // 統一管理所有模態框狀態
-  // type: 'edit' | 'import' | 'diagnose-port-input' | 'diagnose-result' | 'alert' | 'confirm'
   const[modal, setModal] = useState<{ type: string; data?: any } | null>(null);
   const[isSelectOpen, setIsSelectOpen] = useState<'protocol' | 'node' | null>(null);
 
-  // 導入報告狀態
   const [importReport, setImportReport] = useState<{total: number, success: number, fail: number, errors: string[]} | null>(null);
 
   useEffect(() => {
     if (selected) setRules(allRules[selected] || []);
   }, [selected, allRules]);
 
-  // 工具函數：獲取當前節點信息
   const currentNode = nodes.find((n: any) => n.id === selected);
 
-  // 規則驗證函數
   const validateRule = (rule: any, targetNodeId: string, skipIndex: number = -1) => {
     const errors =[];
     if (!rule.listen_port) errors.push("本地端口/區間不能為空");
@@ -730,14 +725,12 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
     if (!rule.dest_port) errors.push("目標端口不能為空");
     else if (!/^\d+(-\d+)?$/.test(rule.dest_port)) errors.push("目標端口格式錯誤");
 
-    // 檢查自定義名稱不能與同節點其他規則重複（如果填寫了）
     const targetRules = targetNodeId === selected ? rules : (allRules[targetNodeId] ||[]);
     if (rule.name) {
       const nameConflict = targetRules.some((r: any, idx: number) => idx !== skipIndex && r.name === rule.name);
       if (nameConflict) errors.push(`自定義名稱 "${rule.name}" 已存在`);
     }
 
-    // 檢查端口衝突
     const portConflict = targetRules.some((r: any, idx: number) => 
       idx !== skipIndex && r.listen_port === rule.listen_port && 
       (r.protocol === rule.protocol || r.protocol === 'tcp,udp' || rule.protocol === 'tcp,udp')
@@ -754,7 +747,6 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
     const targetNodeId = modal.data.nodeId || selected;
     let ruleToSave = { ...modal.data.rule };
     
-    // 自動生成名稱
     if (!ruleToSave.name || ruleToSave.name.trim() === "") {
       const targetRules = targetNodeId === selected ? rules : (allRules[targetNodeId] ||[]);
       ruleToSave.name = `新建規則${targetRules.length + 1}`;
@@ -774,7 +766,7 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
         targetRules.push(ruleToSave);
       } else {
         if(targetNodeId === selected) targetRules[modal.data.index] = ruleToSave;
-        else targetRules.push(ruleToSave); // 跨節點移動的簡化處理
+        else targetRules.push(ruleToSave);
       }
 
       await api("SAVE_RULES", { nodeId: targetNodeId, rules: targetRules });
@@ -782,7 +774,6 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
       if (targetNodeId === selected) {
         setRules(targetRules);
       } else if (modal.data.index !== -1 && targetNodeId !== selected) {
-        // 如果是編輯並改了節點，從當前節點刪除
         const currentRules =[...rules];
         currentRules.splice(modal.data.index, 1);
         await api("SAVE_RULES", { nodeId: selected, rules: currentRules });
@@ -831,7 +822,7 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
     const lines = text.split('\n').filter(l => l.trim() !== '');
     let successCount = 0;
     let failCount = 0;
-    const errors: string[] = [];
+    const errors: string[] =[];
     const newRules = [...rules];
 
     lines.forEach((line, index) => {
@@ -870,6 +861,38 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
     }
   };
 
+  // 實際測速邏輯 (利用前端特性進行時間差檢測)
+  const checkLatency = async (ip: string, port: string, protocol: string): Promise<number> => {
+    const startTime = performance.now();
+    const timeout = 3000; // 3秒超時
+    
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(-1), timeout);
+      
+      try {
+        if (protocol === 'TCP') {
+          // 利用 WebSocket 測量 TCP 握手延遲，無論協議是否匹配，TCP 握手都會先發生
+          const ws = new WebSocket(`ws://${ip}:${port}`);
+          ws.onopen = () => { clearTimeout(timer); ws.close(); resolve(performance.now() - startTime); };
+          ws.onerror = () => { clearTimeout(timer); resolve(performance.now() - startTime); };
+        } else if (protocol === 'HTTP(s)') {
+          // 利用 fetch 進行 HTTP 測速
+          fetch(`http://${ip}:${port}`, { mode: 'no-cors', cache: 'no-store' })
+            .finally(() => { clearTimeout(timer); resolve(performance.now() - startTime); });
+        } else {
+          // 模擬 ICMP/Ping - 利用 Image 資源加載測速
+          const img = new Image();
+          img.onload = () => { clearTimeout(timer); resolve(performance.now() - startTime); };
+          img.onerror = () => { clearTimeout(timer); resolve(performance.now() - startTime); };
+          img.src = `http://${ip}:${port}/favicon.ico?t=${Date.now()}`;
+        }
+      } catch (e) {
+        clearTimeout(timer);
+        resolve(-1);
+      }
+    });
+  };
+
   const startDiagnostics = (rule: any) => {
     if (rule.listen_port.includes('-')) {
       setModal({ type: 'diagnose-port-input', data: { rule } });
@@ -878,47 +901,51 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
     }
   };
 
-  const executeDiagnostics = (rule: any, portToTest: string) => {
+  const executeDiagnostics = async (rule: any, portToTest: string) => {
     if (!/^\d+$/.test(portToTest)) {
       setModal({ type: 'alert', data: { message: "端口必須是單一數字", returnTo: modal } });
       return;
     }
     
-    // 模擬診斷過程
-    const mockResults =[
-      { type: 'HTTP(s)', status: 'pending', latency: '-', loss: '-', quality: '-' },
-      { type: 'TCP', status: 'pending', latency: '-', loss: '-', quality: '-' },
-      { type: 'ICMP/Ping', status: 'pending', latency: '-', loss: '-', quality: '-' }
-    ];
+    const targetIp = currentNode?.ip || "未知IP";
+    const ipToPing = targetIp !== "未知IP" ? targetIp : rule.dest_ip;
+
+    const tests =['HTTP(s)', 'TCP', 'ICMP/Ping'];
     
     setModal({ 
       type: 'diagnose-result', 
       data: { 
         rule, 
-        targetIp: currentNode?.ip || "未知IP",
+        targetIp: ipToPing,
         port: portToTest, 
-        results: mockResults,
+        results: tests.map(t => ({ type: t, status: 'pending', latency: '-', loss: '-', quality: '-' })),
         isTesting: true
       } 
     });
 
-    // 模擬異步測試進度更新
-    setTimeout(() => {
-      setModal(prev => prev?.type === 'diagnose-result' ? {
-        ...prev,
-        data: {
-          ...prev.data,
-          results: prev.data.results.map((r:any) => ({
-            ...r,
-            status: Math.random() > 0.2 ? 'success' : 'timeout',
-            latency: Math.random() > 0.2 ? Math.floor(Math.random() * 100) + 'ms' : '-',
-            loss: Math.random() > 0.2 ? '0.0%' : '100%',
-            quality: Math.random() > 0.2 ? '很好' : '差'
-          })),
-          isTesting: false
-        }
-      } : prev);
-    }, 2000);
+    // 並發執行實際的延遲檢測
+    const newResults = await Promise.all(tests.map(async (type) => {
+      const latencyMs = await checkLatency(ipToPing, portToTest, type);
+      
+      let status = 'timeout';
+      let latencyStr = '-';
+      let loss = '100%';
+      let quality = '-';
+
+      if (latencyMs !== -1 && latencyMs < 3000) {
+        status = 'success';
+        latencyStr = `${Math.round(latencyMs)}ms`;
+        loss = '0.0%';
+        quality = latencyMs < 100 ? '很好' : latencyMs < 300 ? '一般' : '較差';
+      }
+
+      return { type, status, latency: latencyStr, loss, quality };
+    }));
+
+    setModal(prev => prev?.type === 'diagnose-result' ? {
+      ...prev,
+      data: { ...prev.data, results: newResults, isTesting: false }
+    } : prev);
   };
 
   if (nodes.length === 0) return <div className="text-center py-10">請先添加節點</div>;
@@ -955,7 +982,7 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
         </div>
       </div>
 
-      <div className="bg-[#F0F4EF] dark:bg-[#202522] p-5 rounded-[32px] space-y-4">
+      <div className="bg-[#F0F4EF] dark:bg-[#202522] p-5 rounded-[32px] space-y-5">
         <div className="flex flex-wrap justify-between items-center gap-4 px-2">
           <span className="font-bold text-lg flex items-center gap-2">
             轉發規則
@@ -978,86 +1005,106 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
           </div>
         </div>
         
-        <div className="space-y-3">
-          <AnimatePresence mode="popLayout">
-            {rules.length === 0 ? (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-12 text-gray-400 text-sm font-bold bg-white/50 dark:bg-white/5 rounded-[24px]">
-                暫無規則，請點擊右上角按鈕添加或導入
-              </motion.div>
-            ) : viewMode === 'card' ? (
-              // 卡片視圖
-              rules.map((r: any, idx: number) => (
+        <AnimatePresence mode="popLayout">
+          {rules.length === 0 ? (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-12 text-gray-400 text-sm font-bold bg-white/50 dark:bg-white/5 rounded-[24px]">
+              暫無規則，請點擊右上角按鈕添加或導入
+            </motion.div>
+          ) : viewMode === 'card' ? (
+            // 自適應 Grid 佈局，優化不同屏幕大小顯示，保留 MD3 風格
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {rules.map((r: any, idx: number) => (
                 <motion.div 
-                  layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}
+                  layout 
+                  initial={{ opacity: 0, scale: 0.95 }} 
+                  animate={{ opacity: 1, scale: 1 }} 
+                  exit={{ opacity: 0, scale: 0.95 }}
                   key={idx} 
-                  className="bg-white dark:bg-[#111318] p-5 rounded-[24px] shadow-sm border border-gray-100 dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 group hover:shadow-md transition-shadow"
+                  className="bg-white dark:bg-[#111318] p-5 rounded-[24px] shadow-sm border border-gray-100 dark:border-white/5 flex flex-col gap-4 group hover:shadow-md transition-shadow relative"
                 >
-                  <div className="space-y-2 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-sm text-[var(--md-primary)] bg-[var(--md-primary-container)] px-2.5 py-0.5 rounded-md">
-                        {r.name || `新建規則${idx + 1}`}
-                      </span>
-                      <div className="inline-flex items-center px-2 py-0.5 rounded-md bg-gray-100 dark:bg-[#202522] text-xs font-bold text-gray-600 dark:text-gray-400 uppercase">
-                        {r.protocol === "tcp,udp" ? "TCP+UDP" : r.protocol}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 flex-wrap pl-1">
-                      <span className="text-lg font-mono font-black">{r.listen_port}</span>
-                      <span className="text-gray-400">→</span>
-                      <span className="text-base font-mono font-bold text-gray-600 dark:text-gray-300">{r.dest_ip}:{r.dest_port}</span>
+                  <div className="flex justify-between items-start gap-2">
+                    <span className="font-bold text-sm text-[var(--md-primary)] bg-[var(--md-primary-container)] px-3 py-1 rounded-full truncate flex-1">
+                      {r.name || `新建規則${idx + 1}`}
+                    </span>
+                    <div className="px-2 py-1 rounded-lg bg-gray-50 dark:bg-[#202522] text-[11px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-wider shrink-0">
+                      {r.protocol === "tcp,udp" ? "TCP+UDP" : r.protocol}
                     </div>
                   </div>
                   
-                  <div className="flex items-center gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                    <motion.button whileTap={{ scale: 0.9 }} onClick={() => startDiagnostics(r)} className="p-3 bg-blue-50 text-blue-500 dark:bg-blue-900/20 dark:text-blue-400 rounded-2xl" title="診斷">
-                      <Activity className="w-5 h-5" />
+                  {/* 通道視圖卡片內部 */}
+                  <div className="flex flex-col bg-gray-50 dark:bg-[#1A1D24] rounded-[16px] p-4 gap-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500 font-bold whitespace-nowrap">本地端口</span>
+                      <span className="text-[15px] font-mono font-black text-gray-800 dark:text-gray-200 truncate">{r.listen_port}</span>
+                    </div>
+                    
+                    <div className="relative flex items-center justify-center h-2">
+                      <div className="w-full border-t border-dashed border-gray-300 dark:border-gray-600"></div>
+                      <div className="absolute bg-gray-50 dark:bg-[#1A1D24] px-2 text-gray-400">
+                        <ArrowRight className="w-4 h-4" />
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500 font-bold whitespace-nowrap">目標設備</span>
+                      <div className="flex flex-col items-end overflow-hidden pl-2">
+                        <span className="text-sm font-mono font-bold text-gray-600 dark:text-gray-400 truncate max-w-full">{r.dest_ip}</span>
+                        <span className="text-xs font-mono font-bold text-gray-400 dark:text-gray-500">:{r.dest_port}</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* MD3 按鈕組 */}
+                  <div className="flex items-center justify-end gap-2 mt-auto pt-1">
+                    <motion.button whileTap={{ scale: 0.9 }} onClick={() => startDiagnostics(r)} className="p-2.5 bg-blue-50 text-blue-500 dark:bg-blue-900/20 dark:text-blue-400 rounded-xl hover:bg-blue-100 transition-colors" title="診斷">
+                      <Activity className="w-4 h-4" />
                     </motion.button>
-                    <motion.button whileTap={{ scale: 0.9 }} onClick={() => setModal({ type: 'edit', data: { index: idx, nodeId: selected, rule: { ...r } } })} className="p-3 bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300 rounded-2xl" title="編輯">
-                      <Edit2 className="w-5 h-5" />
+                    <motion.button whileTap={{ scale: 0.9 }} onClick={() => setModal({ type: 'edit', data: { index: idx, nodeId: selected, rule: { ...r } } })} className="p-2.5 bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300 rounded-xl hover:bg-gray-200 transition-colors" title="編輯">
+                      <Edit2 className="w-4 h-4" />
                     </motion.button>
-                    <motion.button whileTap={{ scale: 0.9 }} onClick={() => handleDeleteConfirm(idx)} className="p-3 bg-red-50 text-red-500 dark:bg-red-900/20 dark:text-red-400 rounded-2xl" title="刪除">
-                      <Trash2 className="w-5 h-5" />
+                    <motion.button whileTap={{ scale: 0.9 }} onClick={() => handleDeleteConfirm(idx)} className="p-2.5 bg-red-50 text-red-500 dark:bg-red-900/20 dark:text-red-400 rounded-xl hover:bg-red-100 transition-colors" title="刪除">
+                      <Trash2 className="w-4 h-4" />
                     </motion.button>
                   </div>
                 </motion.div>
-              ))
-            ) : (
-              // 表格視圖
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white dark:bg-[#111318] rounded-[24px] overflow-hidden shadow-sm border border-gray-100 dark:border-white/5">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left">
-                    <thead className="bg-gray-50 dark:bg-white/5 text-gray-500 dark:text-gray-400 font-bold uppercase text-xs">
-                      <tr>
-                        <th className="px-6 py-4">規則名稱</th>
-                        <th className="px-6 py-4">協議</th>
-                        <th className="px-6 py-4">本地端口</th>
-                        <th className="px-6 py-4">目標 (IP:端口)</th>
-                        <th className="px-6 py-4 text-right">操作</th>
+              ))}
+            </motion.div>
+          ) : (
+            // 表格視圖
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white dark:bg-[#111318] rounded-[24px] overflow-hidden shadow-sm border border-gray-100 dark:border-white/5">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-gray-50 dark:bg-white/5 text-gray-500 dark:text-gray-400 font-bold uppercase text-xs">
+                    <tr>
+                      <th className="px-6 py-4 whitespace-nowrap">規則名稱</th>
+                      <th className="px-6 py-4 whitespace-nowrap">協議</th>
+                      <th className="px-6 py-4 whitespace-nowrap">本地端口</th>
+                      <th className="px-6 py-4 whitespace-nowrap">目標 (IP:端口)</th>
+                      <th className="px-6 py-4 text-right whitespace-nowrap">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                    {rules.map((r: any, idx: number) => (
+                      <tr key={idx} className="hover:bg-gray-50/50 dark:hover:bg-white/[0.02] transition-colors">
+                        <td className="px-6 py-4 font-bold">{r.name || `新建規則${idx + 1}`}</td>
+                        <td className="px-6 py-4 uppercase font-bold text-xs"><span className="bg-gray-100 dark:bg-[#202522] px-2 py-1 rounded-md">{r.protocol === "tcp,udp" ? "TCP+UDP" : r.protocol}</span></td>
+                        <td className="px-6 py-4 font-mono font-bold">{r.listen_port}</td>
+                        <td className="px-6 py-4 font-mono text-gray-500 dark:text-gray-400">{r.dest_ip}:{r.dest_port}</td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center justify-end gap-1">
+                            <button onClick={() => startDiagnostics(r)} className="p-2 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl"><Activity className="w-4 h-4" /></button>
+                            <button onClick={() => setModal({ type: 'edit', data: { index: idx, nodeId: selected, rule: { ...r } } })} className="p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10 rounded-xl"><Edit2 className="w-4 h-4" /></button>
+                            <button onClick={() => handleDeleteConfirm(idx)} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl"><Trash2 className="w-4 h-4" /></button>
+                          </div>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 dark:divide-white/5">
-                      {rules.map((r: any, idx: number) => (
-                        <tr key={idx} className="hover:bg-gray-50/50 dark:hover:bg-white/[0.02] transition-colors">
-                          <td className="px-6 py-4 font-bold">{r.name || `新建規則${idx + 1}`}</td>
-                          <td className="px-6 py-4 uppercase font-bold text-xs"><span className="bg-gray-100 dark:bg-[#202522] px-2 py-1 rounded-md">{r.protocol === "tcp,udp" ? "TCP+UDP" : r.protocol}</span></td>
-                          <td className="px-6 py-4 font-mono font-bold">{r.listen_port}</td>
-                          <td className="px-6 py-4 font-mono text-gray-500 dark:text-gray-400">{r.dest_ip}:{r.dest_port}</td>
-                          <td className="px-6 py-4">
-                            <div className="flex items-center justify-end gap-1">
-                              <button onClick={() => startDiagnostics(r)} className="p-2 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl"><Activity className="w-4 h-4" /></button>
-                              <button onClick={() => setModal({ type: 'edit', data: { index: idx, nodeId: selected, rule: { ...r } } })} className="p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10 rounded-xl"><Edit2 className="w-4 h-4" /></button>
-                              <button onClick={() => handleDeleteConfirm(idx)} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl"><Trash2 className="w-4 h-4" /></button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* 統一模態框容器 */}
@@ -1135,7 +1182,7 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
 
                 <div className="p-6 md:p-8 pt-2 flex gap-4">
                   <button onClick={() => setModal(null)} disabled={isSaving} className="flex-1 py-4 rounded-full font-bold bg-[#F0F4EF] dark:bg-[#202522] hover:bg-gray-200 dark:hover:bg-white/10 transition-colors disabled:opacity-50 text-gray-700 dark:text-gray-300">取消</button>
-                  <button onClick={handleSave} disabled={isSaving} className="flex-1 py-4 rounded-full font-bold bg-[#006494] text-white hover:bg-[#00527a] transition-colors flex justify-center items-center gap-2 disabled:opacity-70 shadow-md">
+                  <button onClick={handleSave} disabled={isSaving} className="flex-1 py-4 rounded-full font-bold bg-[var(--md-primary)] text-white hover:opacity-90 transition-colors flex justify-center items-center gap-2 disabled:opacity-70 shadow-md">
                     {isSaving ? <><Loader2 className="w-5 h-5 animate-spin" /><span>保存中...</span></> : <span>保存規則</span>}
                   </button>
                 </div>
@@ -1225,7 +1272,6 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
             {/* 5. 診斷: 結果展示 (圖3排版，適配MD3黑/白模式) */}
             {modal.type === 'diagnose-result' && (
               <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative w-full max-w-4xl bg-[#F0F4EF] dark:bg-[#151923] rounded-[32px] shadow-2xl overflow-hidden flex flex-col border border-gray-200 dark:border-[#222736]">
-                {/* 頂部標題 */}
                 <div className="bg-[#E4E9E6] dark:bg-[#1C212D] p-5 px-6 flex justify-between items-center border-b border-gray-200 dark:border-[#2A3041]">
                   <div>
                     <h3 className="text-xl font-bold text-gray-800 dark:text-white">轉發診斷結果</h3>
@@ -1237,13 +1283,11 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
                 </div>
 
                 <div className="p-6 space-y-6">
-                  {/* 警告提示 */}
                   <div className="flex items-start gap-2 text-xs font-bold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-500/10 p-3 rounded-xl">
                     <Info className="w-4 h-4 shrink-0 mt-0.5" />
                     <span>由於面板為被動模式，規則創建後請等大約30秒agent獲取生效。TCPing當出口沒有部署服務時顯示超時為正常現象。</span>
                   </div>
 
-                  {/* 數據卡片 */}
                   <div className="grid grid-cols-3 gap-4">
                     <div className="bg-white dark:bg-[#1C212D] border border-gray-200 dark:border-[#2A3041] rounded-2xl p-4 text-center shadow-sm">
                       <div className="text-2xl font-black text-gray-800 dark:text-gray-100">{modal.data.results.length}</div>
@@ -1259,7 +1303,6 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
                     </div>
                   </div>
 
-                  {/* 測試表格 */}
                   <div className="bg-white dark:bg-[#1C212D] border border-gray-200 dark:border-[#2A3041] rounded-[24px] overflow-hidden shadow-sm">
                     <div className="bg-blue-50/50 dark:bg-[#1E2638] px-4 py-3 border-b border-gray-200 dark:border-[#2A3041] flex items-center gap-2">
                       <Terminal className="w-4 h-4 text-blue-600 dark:text-blue-400" />
@@ -1269,19 +1312,19 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
                       <table className="w-full text-sm text-left">
                         <thead className="bg-gray-50 dark:bg-[#222736] text-gray-600 dark:text-gray-300 font-bold text-xs">
                           <tr>
-                            <th className="px-5 py-3 rounded-tl-xl">協議類型</th>
-                            <th className="px-5 py-3">路徑</th>
-                            <th className="px-5 py-3">狀態</th>
-                            <th className="px-5 py-3">延遲(ms)</th>
-                            <th className="px-5 py-3">丟包率</th>
-                            <th className="px-5 py-3 rounded-tr-xl">質量</th>
+                            <th className="px-5 py-3 rounded-tl-xl whitespace-nowrap">協議類型</th>
+                            <th className="px-5 py-3 whitespace-nowrap">路徑</th>
+                            <th className="px-5 py-3 whitespace-nowrap">狀態</th>
+                            <th className="px-5 py-3 whitespace-nowrap">延遲(ms)</th>
+                            <th className="px-5 py-3 whitespace-nowrap">丟包率</th>
+                            <th className="px-5 py-3 rounded-tr-xl whitespace-nowrap">質量</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-[#2A3041]">
                           {modal.data.results.map((res: any, i: number) => (
                             <tr key={i} className="hover:bg-gray-50 dark:hover:bg-[#242A3A] transition-colors text-gray-700 dark:text-gray-200">
                               <td className="px-5 py-4 font-bold">{res.type}</td>
-                              <td className="px-5 py-4">
+                              <td className="px-5 py-4 min-w-[200px]">
                                 <div className="font-mono text-xs">入口({modal.data.port}) → 目標({modal.data.rule.dest_ip}:{modal.data.rule.dest_port})</div>
                               </td>
                               <td className="px-5 py-4">
