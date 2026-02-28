@@ -1179,7 +1179,7 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
                             {diagState.status === 'testing' ? <Loader2 className="w-5 h-5 text-blue-400 animate-spin" /> : 
                              diagState.result?.success ? <CheckCircle className="w-5 h-5 text-green-500" /> : <AlertCircle className="w-5 h-5 text-red-500" />}
                             <div>
-                              <div className="font-bold">入口端 -> 目標({diagState.rule.dest_ip}:{diagState.rule.dest_port})</div>
+                              <div className="font-bold">面板 → 入口TCPping ({diagState.rule.dest_ip}:{diagState.rule.dest_port})</div>
                               <div className="text-xs text-gray-500">{diagState.rule.dest_ip}:{diagState.targetPort}</div>
                             </div>
                           </div>
