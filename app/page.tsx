@@ -887,9 +887,10 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
         return;
       }
     }
+    //延遲檢測部分模塊
+const targetIp = currentNode?.ip || "127.0.0.1";
     
-    const targetIp = currentNode?.ip || "127.0.0.1";
-    
+    // 初始化 Modal 狀態
     setModal({ 
       type: 'diagnose-result', 
       data: { 
@@ -904,30 +905,9 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
       } 
     });
 
-    // 真實的前端網絡延遲檢測機制 (利用 fetch no-cors 探測 TCP 與 HTTP 可用性)
-    const measureLatency = async () => {
-      const start = performance.now();
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000); 
-        await fetch(`http://${targetIp}:${portToTest}`, { mode: 'no-cors', cache: 'no-store', signal: controller.signal });
-        clearTimeout(timeoutId);
-        return Math.round(performance.now() - start);
-      } catch (error: any) {
-        const latency = Math.round(performance.now() - start);
-        // 若為真正的超時 AbortError，或時間超過 2.9 秒，視為不通
-        if (error.name === 'AbortError' || latency >= 2900) return -1; 
-        // 發生 CORS 或網絡協議錯誤代表 TCP 握手已成功連接，返回實測延遲
-        return latency;
-      }
-    };
-
-    const tcpLatency = await measureLatency();
-    await new Promise(r => setTimeout(r, 150)); // 微小間隔
-    const httpLatency = await measureLatency();
-
+    // 格式化 Agent 返回的結果
     const formatRes = (lat: number) => {
-      if (lat === -1) return { status: 'timeout', latency: '-', loss: '100%', quality: '-' };
+      if (lat === -1 || lat === undefined) return { status: 'timeout', latency: '-', loss: '100%', quality: '-' };
       let quality = '差';
       if (lat < 80) quality = '很好';
       else if (lat < 200) quality = '良好';
@@ -935,17 +915,93 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
       return { status: 'success', latency: `${lat}ms`, loss: '0.0%', quality };
     };
 
-    setModal(prev => prev?.type === 'diagnose-result' ? {
-      ...prev,
-      data: {
-        ...prev.data,
-        results:[
-          { type: 'TCP', ...formatRes(tcpLatency) },
-          { type: 'HTTP', ...formatRes(httpLatency) }
-        ],
-        isTesting: false
+    try {
+      // 1. 請求後端下發檢測任務給目標節點
+      const startRes = await fetch("/api", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          action: "START_DIAGNOSE", 
+          auth: token, 
+          nodeId: currentNode.id, 
+          ip: targetIp, 
+          port: portToTest 
+        })
+      });
+      const startData = await startRes.json();
+      
+      if (!startData.success) {
+        throw new Error("發起檢測任務失敗");
       }
-    } : prev);
+
+      const taskId = startData.taskId;
+      let isCompleted = false;
+      let attempts = 0;
+      const maxAttempts = 15; // 最多輪詢 15 次 (約 30 秒)
+
+      // 2. 開始輪詢任務結果
+      while (!isCompleted && attempts < maxAttempts) {
+        attempts++;
+        await new Promise(r => setTimeout(r, 2000)); // 每 2 秒查一次
+
+        const pollRes = await fetch("/api", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            action: "GET_DIAGNOSE_RESULT", 
+            auth: token, 
+            taskId: taskId 
+          })
+        });
+        const pollData = await pollRes.json();
+
+        // 任務完成，收到 Agent 的數據
+        if (pollData.success && pollData.task && pollData.task.status === 'completed') {
+          const agentResults = pollData.task.results;
+          setModal(prev => prev?.type === 'diagnose-result' ? {
+            ...prev,
+            data: {
+              ...prev.data,
+              results:[
+                { type: 'TCP', ...formatRes(agentResults.tcp) },
+                { type: 'HTTP', ...formatRes(agentResults.http) }
+              ],
+              isTesting: false
+            }
+          } : prev);
+          isCompleted = true;
+        }
+      }
+
+      // 3. 處理超時 (Agent 沒響應或者節點掉線)
+      if (!isCompleted) {
+        setModal(prev => prev?.type === 'diagnose-result' ? {
+          ...prev,
+          data: {
+            ...prev.data,
+            results:[
+              { type: 'TCP', ...formatRes(-1) },
+              { type: 'HTTP', ...formatRes(-1) }
+            ],
+            isTesting: false
+          }
+        } : prev);
+      }
+
+    } catch (error) {
+       // 錯誤處理 (如網絡異常)
+       setModal(prev => prev?.type === 'diagnose-result' ? {
+        ...prev,
+        data: {
+          ...prev.data,
+          results:[
+            { type: 'TCP', ...formatRes(-1) },
+            { type: 'HTTP', ...formatRes(-1) }
+          ],
+          isTesting: false
+        }
+      } : prev);
+    }
   };
 
   if (nodes.length === 0) return <div className="text-center py-10">請先添加節點</div>;
