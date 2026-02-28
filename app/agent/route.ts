@@ -77,7 +77,7 @@ export async function GET(req: Request) {
       return NextResponse.json({
         success: true,
         // 如果面板活躍，要求 Agent 每 3 秒上報一次，否則 30 秒
-        interval: isActive ? 3 : 30,
+        interval: isActive ? 3 : 60,
         // 如果有指令 (如 UPDATE)，通知 Agent 去下載配置
         has_cmd: !!pendingCmd 
       });
