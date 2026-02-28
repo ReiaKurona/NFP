@@ -174,8 +174,8 @@ def loop():
                 if resp.status == 200:
                     data = json.loads(resp.read().decode())
                     if data.get("interval"): interval = data["interval"] # 允許面板動態調整心跳間隔
-                    # 如果面板下發了更新指令 (has_cmd)，或者距離上次同步超過 60 秒，則重新拉取規則
-                    if data.get("has_cmd") or (time.time() - last_sync > 60):
+                    # 如果面板下發了更新指令 (has_cmd)，或者距離上次同步超過 180 秒，則重新拉取規則
+                    if data.get("has_cmd") or (time.time() - last_sync > 180):
                         download_and_apply_config()
                         last_sync = time.time()
         except Exception as e:
