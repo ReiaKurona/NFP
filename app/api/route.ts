@@ -16,31 +16,37 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const action = searchParams.get("action");
 
-    // === 新增：類似訂閱鏈接的配置下載接口 ===
     if (action === "DOWNLOAD_CONFIG") {
         const nodeId = searchParams.get("node_id");
         const token = searchParams.get("token");
-
         if (!nodeId || !token) return NextResponse.json({ error: "Missing params" }, { status: 400 });
-
         const node: any = await kv.hget("nodes", nodeId);
-        
-        // 嚴格校驗 Token
-        if (!node || node.token !== token) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+        if (!node || node.token !== token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-        // 讀取規則
         const rules = await kv.lrange(`rules:${nodeId}`, 0, -1) ||[];
-        
-        // 清除更新標記
         await kv.del(`cmd:${nodeId}`);
-
-        // 直接返回明文 JSON 配置，方便瀏覽器調試和 Agent 下載
         return NextResponse.json({ success: true, rules: rules });
     }
 
-    // === 原有：心跳上報 ===
+    // === 新增：Agent 上傳檢測結果接口 ===
+    if (action === "UPLOAD_DIAGNOSE") {
+        const dataStr = searchParams.get("data");
+        if (!dataStr) return NextResponse.json({ error: "Missing data" }, { status: 400 });
+        const cleanData = dataStr.replace(/ /g, '+');
+        let data;
+        try {
+            data = JSON.parse(Buffer.from(cleanData, 'base64').toString('utf-8'));
+        } catch (e) { return NextResponse.json({ error: "Decode Error" }, { status: 400 }); }
+
+        const { nodeId, token, taskId, results } = data;
+        const node: any = await kv.hget("nodes", nodeId);
+        if (!node || node.token !== token) return NextResponse.json({ error: "Auth failed" }, { status: 401 });
+
+        // 將檢測結果寫入 KV，設置 5 分鐘過期防止佔用空間
+        await kv.set(`task:${taskId}`, { status: 'completed', results }, { ex: 300 });
+        return NextResponse.json({ success: true });
+    }
+
     const dataStr = searchParams.get("data");
     if (action === "HEARTBEAT" && dataStr) {
       const cleanData = dataStr.replace(/ /g, '+');
@@ -62,10 +68,19 @@ export async function GET(req: Request) {
       const lastActivity = await kv.get<number>("panel_activity") || 0;
       const isActive = (Date.now() - lastActivity) < 60000;
 
+      // === 新增：檢查是否有等待下發的檢測任務 ===
+      const pendingTaskStr = await kv.get(`pending_task:${nodeId}`);
+      let diagnose_task = null;
+      if (pendingTaskStr) {
+          diagnose_task = pendingTaskStr; // 取出任務
+          await kv.del(`pending_task:${nodeId}`); // 取出後即刪除，保證只下發一次
+      }
+
       return NextResponse.json({
         success: true,
         interval: isActive ? 3 : 30,
-        has_cmd: !!pendingCmd // 通知 Agent 去下載配置
+        has_cmd: !!pendingCmd,
+        diagnose_task: diagnose_task // 下發給 Agent
       });
     }
     
@@ -85,13 +100,6 @@ export async function POST(req: Request) {
 
     if (action === "LOGIN") {
         const isPwdCorrect = hashPassword(data.password) === currentHash;
-        // 2FA 登錄邏輯暫時註釋
-        /*
-        const totpSecret = await kv.get<string>("totp_secret");
-        let isTotpCorrect = false;
-        if (totpSecret && data.password.length === 6) try { isTotpCorrect = authenticator.check(data.password, totpSecret); } catch(e){}
-        if (isPwdCorrect || isTotpCorrect) return NextResponse.json({ success: true, token: currentHash });
-        */
         if (isPwdCorrect) return NextResponse.json({ success: true, token: currentHash });
         return NextResponse.json({ error: "Auth failed" }, { status: 401 });
     }
@@ -99,6 +107,23 @@ export async function POST(req: Request) {
     if (auth !== currentHash) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     if (action === "KEEP_ALIVE") { await kv.set("panel_activity", Date.now()); return NextResponse.json({ success: true }); }
+
+    // === 新增：前端發起檢測任務 ===
+    if (action === "START_DIAGNOSE") {
+        const taskId = `diag_${data.nodeId}_${Date.now()}`;
+        const taskPayload = { taskId, ip: data.ip, port: data.port };
+        // 初始化任務狀態為 pending
+        await kv.set(`task:${taskId}`, { status: 'pending' }, { ex: 300 });
+        // 把任務掛載到節點的 pending 隊列，過期時間 60 秒 (防止節點掉線導致死任務)
+        await kv.set(`pending_task:${data.nodeId}`, taskPayload, { ex: 60 });
+        return NextResponse.json({ success: true, taskId });
+    }
+
+    // === 新增：前端輪詢獲取檢測結果 ===
+    if (action === "GET_DIAGNOSE_RESULT") {
+        const taskInfo = await kv.get(`task:${data.taskId}`);
+        return NextResponse.json({ success: true, task: taskInfo });
+    }
 
     // 規則管理
     if (action === "SAVE_RULES") {
@@ -127,18 +152,10 @@ export async function POST(req: Request) {
     // 密碼修改
     if (action === "CHANGE_PASSWORD") { const newHash = hashPassword(data.newPassword); await kv.set("admin_password", newHash); return NextResponse.json({ success: true, token: newHash }); }
     
-    // 2FA 接口暫時註釋
-    /*
-    if (action === "GENERATE_2FA") { const secret = authenticator.generateSecret(); return NextResponse.json({ secret, otpauth: authenticator.keyuri("Admin", "AeroNode", secret) }); }
-    if (action === "VERIFY_AND_ENABLE_2FA") { if (authenticator.check(data.code, data.secret)) { await kv.set("totp_secret", data.secret); return NextResponse.json({ success: true }); } return NextResponse.json({ error: "Code invalid" }, { status: 400 }); }
-    if (action === "DISABLE_2FA") { await kv.del("totp_secret"); return NextResponse.json({ success: true }); }
-    if (action === "CHECK_2FA_STATUS") return NextResponse.json({ enabled: !!totpSecret });
-    */
-    
     // 備份
     if (action === "EXPORT_ALL") { const nodes = await kv.hgetall("nodes") || {}; const rules: any = {}; for (const id of Object.keys(nodes)) rules[id] = await kv.lrange(`rules:${id}`, 0, -1) ||[]; return NextResponse.json({ nodes, rules }); }
     if (action === "IMPORT_ALL") { const { nodes, rules } = data.backupData; await kv.del("nodes"); if (Object.keys(nodes).length > 0) await kv.hset("nodes", nodes); for (const nodeId of Object.keys(rules)) { await kv.del(`rules:${nodeId}`); if (rules[nodeId].length > 0) await kv.rpush(`rules:${nodeId}`, ...rules[nodeId]); await kv.set(`cmd:${nodeId}`, "UPDATE"); } return NextResponse.json({ success: true }); }
 
     return NextResponse.json({ error: "Unknown Action" }, { status: 400 });
   } catch (e: any) { return NextResponse.json({ error: e.message }, { status: 500 }); }
-}
+        }
