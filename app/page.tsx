@@ -209,10 +209,14 @@ function ForcePasswordChange({ api, setAuth, onComplete }: any) {
     </div>
   );
 }
-
+//首页仪表盘
 function DashboardView({ nodes, allRules }: any) {
+  // 增加视图切换状态：'md3' | 'classic' | 'table'
+  const [viewMode, setViewMode] = useState<'md3' | 'classic' | 'table'>('md3');
+
   return (
     <div className="space-y-6">
+      {/* 顶部统计面板保持不变 */}
       <div className="grid grid-cols-2 gap-4">
         <motion.div whileHover={{ scale: 1.02 }} className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[28px] text-center">
           <div className="text-sm text-gray-500">總節點</div>
@@ -223,60 +227,200 @@ function DashboardView({ nodes, allRules }: any) {
           <div className="text-3xl font-bold text-[var(--md-primary)]">{Object.values(allRules).flat().length}</div>
         </motion.div>
       </div>
+
+      {/* 视图切换按钮 (MD3 Segmented Button 风格) */}
+      <div className="flex justify-end">
+        <div className="flex bg-gray-200 dark:bg-black/40 rounded-full p-1 border border-gray-300 dark:border-gray-800">
+          <button
+            onClick={() => setViewMode('md3')}
+            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${viewMode === 'md3' ? 'bg-[#F0F4EF] dark:bg-[#202522] text-[var(--md-primary)] shadow-sm' : 'text-gray-500'}`}
+          >
+            MD3卡片
+          </button>
+          <button
+            onClick={() => setViewMode('classic')}
+            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${viewMode === 'classic' ? 'bg-[#F0F4EF] dark:bg-[#202522] text-[var(--md-primary)] shadow-sm' : 'text-gray-500'}`}
+          >
+            經典卡片
+          </button>
+          <button
+            onClick={() => setViewMode('table')}
+            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${viewMode === 'table' ? 'bg-[#F0F4EF] dark:bg-[#202522] text-[var(--md-primary)] shadow-sm' : 'text-gray-500'}`}
+          >
+            列表表格
+          </button>
+        </div>
+      </div>
       
-      {nodes.map((n: any) => {
-        const isOnline = n.lastSeen && (Date.now() - n.lastSeen < 60000);
-        const ram = n.stats?.ram_usage || "0";
-        const rx = n.stats?.rx_speed || "0 B/s";
-        const tx = n.stats?.tx_speed || "0 B/s";
-        const cpu = n.stats?.cpu_load || "0.0";
+      {/* 动态渲染对应视图 */}
+      {viewMode === 'table' ? (
+        // ================= 表格视图 =================
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-[#F0F4EF] dark:bg-[#202522] rounded-[32px] overflow-x-auto p-2">
+          <table className="w-full text-left border-collapse min-w-[600px]">
+            <thead>
+              <tr className="text-xs text-gray-500 border-b border-gray-300 dark:border-gray-800">
+                <th className="px-6 py-4 font-medium">節點名稱 / IP</th>
+                <th className="px-6 py-4 font-medium">狀態</th>
+                <th className="px-6 py-4 font-medium">CPU</th>
+                <th className="px-6 py-4 font-medium">內存</th>
+                <th className="px-6 py-4 font-medium">↓ 下載</th>
+                <th className="px-6 py-4 font-medium">↑ 上傳</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 dark:divide-gray-800/50">
+              {nodes.map((n: any) => {
+                const isOnline = n.lastSeen && (Date.now() - n.lastSeen < 60000);
+                const ram = n.stats?.ram_usage || "0";
+                const rx = n.stats?.rx_speed || "0 B/s";
+                const tx = n.stats?.tx_speed || "0 B/s";
+                const cpu = n.stats?.cpu_load || "0.0";
+                const cpuPercent = Math.min(parseFloat(cpu) * 10, 100).toFixed(1);
 
-        return (
-          <motion.div key={n.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-[#F0F4EF] dark:bg-[#202522] rounded-[32px] p-6 relative overflow-hidden">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h3 className="text-xl font-bold">{n.name}</h3>
-                <p className="text-xs text-gray-500 font-mono mt-1">{n.ip}</p>
-              </div>
-              <span className={`px-4 py-1.5 rounded-full text-xs font-bold ${isOnline ? 'bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)]' : 'bg-gray-300 dark:bg-gray-800 text-gray-500'}`}>
-                {isOnline ? '在線' : '離線'}
-              </span>
-            </div>
-            
-            <div className="space-y-3 mb-6">
-                <div className="space-y-1">
-                    <div className="flex justify-between text-xs text-gray-500">
-                        <span>CPU 負載</span>
-                        <span>{Math.min(parseFloat(cpu)*10, 100).toFixed(1)}%</span>
+                return (
+                  <tr key={n.id} className="hover:bg-white/50 dark:hover:bg-black/20 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="font-bold text-sm">{n.name}</div>
+                      <div className="text-xs text-gray-500 font-mono">{n.ip}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${isOnline ? 'bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)]' : 'bg-gray-300 dark:bg-gray-800 text-gray-500'}`}>
+                        {isOnline ? '在線' : '離線'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-sm font-mono">{cpuPercent}%</td>
+                    <td className="px-6 py-4 text-sm font-mono">{ram}%</td>
+                    <td className="px-6 py-4 text-sm font-mono text-emerald-600 dark:text-emerald-400">{rx}</td>
+                    <td className="px-6 py-4 text-sm font-mono text-blue-600 dark:text-blue-400">{tx}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </motion.div>
+      ) : (
+        // ================= 卡片视图 (自适应 Grid) =================
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {nodes.map((n: any) => {
+            const isOnline = n.lastSeen && (Date.now() - n.lastSeen < 60000);
+            const ram = n.stats?.ram_usage || "0";
+            const rx = n.stats?.rx_speed || "0 B/s";
+            const tx = n.stats?.tx_speed || "0 B/s";
+            const cpu = n.stats?.cpu_load || "0.0";
+            const cpuPercent = Math.min(parseFloat(cpu) * 10, 100).toFixed(1);
+
+            if (viewMode === 'md3') {
+              // ----- MD3 环形精简卡片 (根据图片设计) -----
+              // 计算 SVG 圆环参数 (半径 24, 周长约 150.8)
+              const radius = 24;
+              const circumference = 2 * Math.PI * radius;
+              const strokeDashoffset = circumference - (circumference * parseFloat(ram)) / 100;
+
+              return (
+                <motion.div key={n.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-[#F0F4EF] dark:bg-[#1A1C19] rounded-[32px] p-6 relative flex flex-col justify-between min-h-[160px]">
+                  {/* 头部：名称 和 状态 */}
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-base font-bold text-gray-800 dark:text-gray-100">{n.name} &gt;</h3>
+                    {/* 使用小链接图标或状态替代在线时长 */}
+                    <span className="text-gray-400 flex items-center">
+                       {isOnline ? (
+                         <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                       ) : (
+                         <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824 2.167a1 1 0 111.414 1.414m-1.414-1.414L3 3m8.293 8.293l1.414 1.414" /></svg>
+                       )}
+                    </span>
+                  </div>
+
+                  {/* 数据排版区 */}
+                  <div className="flex justify-between items-center px-1">
+                    {/* 左侧：CPU 指示 (仿照图片的小圆点设计) */}
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <span className="font-mono text-sm text-gray-700 dark:text-gray-300">{cpuPercent}%</span>
+                      <div className="w-3 h-3 rounded-full bg-pink-600 dark:bg-pink-500"></div>
                     </div>
-                    <div className="h-2 w-full bg-gray-200 dark:bg-black/20 rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-500 rounded-full transition-all duration-1000" style={{ width: `${Math.min(parseFloat(cpu)*10, 100)}%` }}></div>
+
+                    {/* 中间：内存 圆环进度 */}
+                    <div className="relative w-16 h-16 flex items-center justify-center">
+                      <svg className="w-full h-full transform -rotate-90">
+                        {/* 背景底环 */}
+                        <circle cx="32" cy="32" r={radius} stroke="currentColor" strokeWidth="6" fill="transparent" className="text-gray-200 dark:text-gray-800" />
+                        {/* 进度环 */}
+                        <circle 
+                          cx="32" cy="32" r={radius} stroke="currentColor" strokeWidth="6" fill="transparent" 
+                          strokeDasharray={circumference} 
+                          strokeDashoffset={strokeDashoffset} 
+                          strokeLinecap="round"
+                          className="text-pink-600 dark:text-pink-500 transition-all duration-1000" 
+                        />
+                      </svg>
+                      {/* 中心文字 */}
+                      <span className="absolute text-[11px] font-mono font-bold text-gray-700 dark:text-gray-200">{ram}%</span>
+                    </div>
+
+                    {/* 右侧：上下行速率 */}
+                    <div className="flex flex-col text-xs text-gray-500 dark:text-gray-400 space-y-1">
+                      <div className="flex items-center gap-1 justify-end">
+                        <span>↓</span>
+                        <span className="font-mono">{rx}</span>
+                      </div>
+                      <div className="flex items-center gap-1 justify-end">
+                        <span>↑</span>
+                        <span className="font-mono">{tx}</span>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            }
+
+            // ----- 经典卡片视图 (保留你原有的完整代码不做任何逻辑更改) -----
+            return (
+              <motion.div key={n.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-[#F0F4EF] dark:bg-[#202522] rounded-[32px] p-6 relative overflow-hidden">
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h3 className="text-xl font-bold">{n.name}</h3>
+                    <p className="text-xs text-gray-500 font-mono mt-1">{n.ip}</p>
+                  </div>
+                  <span className={`px-4 py-1.5 rounded-full text-xs font-bold ${isOnline ? 'bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)]' : 'bg-gray-300 dark:bg-gray-800 text-gray-500'}`}>
+                    {isOnline ? '在線' : '離線'}
+                  </span>
+                </div>
+                
+                <div className="space-y-3 mb-6">
+                    <div className="space-y-1">
+                        <div className="flex justify-between text-xs text-gray-500">
+                            <span>CPU 負載</span>
+                            <span>{cpuPercent}%</span>
+                        </div>
+                        <div className="h-2 w-full bg-gray-200 dark:bg-black/20 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500 rounded-full transition-all duration-1000" style={{ width: `${cpuPercent}%` }}></div>
+                        </div>
+                    </div>
+                    <div className="space-y-1">
+                        <div className="flex justify-between text-xs text-gray-500">
+                            <span>內存使用</span>
+                            <span>{ram}%</span>
+                        </div>
+                        <div className="h-2 w-full bg-gray-200 dark:bg-black/20 rounded-full overflow-hidden">
+                            <div className="h-full bg-purple-500 rounded-full transition-all duration-1000" style={{ width: `${ram}%` }}></div>
+                        </div>
                     </div>
                 </div>
-                <div className="space-y-1">
-                    <div className="flex justify-between text-xs text-gray-500">
-                        <span>內存使用</span>
-                        <span>{ram}%</span>
-                    </div>
-                    <div className="h-2 w-full bg-gray-200 dark:bg-black/20 rounded-full overflow-hidden">
-                        <div className="h-full bg-purple-500 rounded-full transition-all duration-1000" style={{ width: `${ram}%` }}></div>
-                    </div>
-                </div>
-            </div>
 
-            <div className="grid grid-cols-2 gap-3">
-               <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
-                 <span className="text-xs text-gray-500 mb-1">↓ 下載速率</span>
-                 <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">{rx}</span>
-               </div>
-               <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
-                 <span className="text-xs text-gray-500 mb-1">↑ 上傳速率</span>
-                 <span className="font-mono text-sm font-bold text-blue-600 dark:text-blue-400">{tx}</span>
-               </div>
-            </div>
-          </motion.div>
-        );
-      })}
+                <div className="grid grid-cols-2 gap-3">
+                   <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
+                     <span className="text-xs text-gray-500 mb-1">↓ 下載速率</span>
+                     <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">{rx}</span>
+                   </div>
+                   <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
+                     <span className="text-xs text-gray-500 mb-1">↑ 上傳速率</span>
+                     <span className="font-mono text-sm font-bold text-blue-600 dark:text-blue-400">{tx}</span>
+                   </div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
