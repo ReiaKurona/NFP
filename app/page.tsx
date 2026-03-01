@@ -212,7 +212,7 @@ function ForcePasswordChange({ api, setAuth, onComplete }: any) {
 //首页仪表盘
 function DashboardView({ nodes, allRules }: any) {
   // 定义视图模式状态: 'new-card' | 'classic' | 'table'
-  const [viewMode, setViewMode] = React.useState('new-card');
+  const [viewMode, setViewMode] = useState('new-card');
 
   // 顶部总览卡片组件
   const SummaryCard = ({ title, value }: { title: string, value: number }) => (
@@ -287,7 +287,7 @@ function DashboardView({ nodes, allRules }: any) {
                 : 'text-gray-600 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-white/5'
             }`}
           >
-            {/* 这里假设使用了Material Symbols/Icons，如无图标库可只显示文字 */}
+            {/* 使用 Material Icons 图标字体，如环境不支持可仅显示文字 */}
             <span className="material-symbols-rounded text-sm hidden sm:block">{mode.icon}</span>
             <span>{mode.label}</span>
           </button>
@@ -357,7 +357,7 @@ function DashboardView({ nodes, allRules }: any) {
               </div>
             </motion.div>
           ) : (
-            /* 网格视图容器 */
+            /* 网格视图容器 (卡片模式) */
             <motion.div 
               key="grid"
               initial={{ opacity: 0 }}
@@ -437,7 +437,7 @@ function DashboardView({ nodes, allRules }: any) {
                   );
                 }
 
-                // 经典卡片视图 (保留原有逻辑，优化繁体与排版)
+                // 经典卡片视图
                 return (
                   <motion.div key={n.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-[#F0F4EF] dark:bg-[#202522] rounded-[32px] p-6 relative overflow-hidden">
                     <div className="flex justify-between items-center mb-6">
