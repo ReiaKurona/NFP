@@ -163,48 +163,196 @@ function NavItem({ icon, label, active, onClick }: any) {
     </motion.button>
   );
 }
+// 通用 MD3 风格弹窗组件
+function AlertDialog({ open, title, content, type = "error", onConfirm }: any) {
+  if (!open) return null;
+  const isError = type === "error";
+  const bgColor = isError ? "bg-red-100 dark:bg-red-900/30" : "bg-green-100 dark:bg-green-900/30";
+  const iconColor = isError ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400";
+  const btnColor = isError ? "bg-red-600 text-white" : "bg-green-600 text-white";
 
-function LoginView({ setAuth, setIsFirstLogin }: any) {
-  const[pwd, setPwd] = useState("");
-  const handleLogin = async () => {
-    try {
-      const res = await axios.post("/api", { action: "LOGIN", password: pwd });
-      localStorage.setItem("aero_auth", res.data.token);
-      setAuth(res.data.token);
-      setIsFirstLogin(res.data.isFirstLogin);
-    } catch { alert("❌ 密碼錯誤"); }
-  };
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#FBFDF8] dark:bg-[#111318] p-6 text-gray-900 dark:text-white">
-      <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="w-full max-w-sm bg-[#F0F4EF] dark:bg-[#202522] p-8 rounded-[32px] space-y-8 shadow-xl">
-        <div className="text-center space-y-3">
-          <Shield className="w-16 h-16 mx-auto text-[#006C4C]" />
-          <h1 className="text-3xl font-bold">AeroNode</h1>
-          <p className="text-xs text-gray-500">請輸入管理密碼</p>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }} 
+        animate={{ opacity: 1, scale: 1 }} 
+        className="w-full max-w-[320px] bg-[#F0F4EF] dark:bg-[#202522] rounded-[28px] p-6 shadow-2xl flex flex-col items-center text-center space-y-4"
+      >
+        <div className={`w-12 h-12 rounded-full flex items-center justify-center ${bgColor} ${iconColor}`}>
+          {isError ? <AlertCircle className="w-6 h-6" /> : <CheckCircle2 className="w-6 h-6" />}
         </div>
-        <input type="password" value={pwd} onChange={e=>setPwd(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleLogin()} className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl text-center focus:outline-none focus:ring-2 ring-[var(--md-primary)]" placeholder="••••••••" />
-        <motion.button whileTap={{ scale: 0.95 }} onClick={handleLogin} className="w-full py-4 bg-[var(--md-primary)] text-[var(--md-on-primary)] rounded-full font-bold">登錄</motion.button>
+        <div>
+          <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h3>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">{content}</p>
+        </div>
+        <button 
+          onClick={onConfirm}
+          className={`w-full py-3 rounded-full font-medium text-sm transition-transform active:scale-95 ${btnColor}`}
+        >
+          {isError ? "重试" : "好的"}
+        </button>
       </motion.div>
     </div>
   );
 }
 
+// 登录界面
+function LoginView({ setAuth, setIsFirstLogin }: any) {
+  const [pwd, setPwd] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [dialogState, setDialogState] = useState({ open: false, title: "", content: "" });
+
+  const handleLogin = async () => {
+    if (!pwd) return;
+    setLoading(true);
+    try {
+      const res = await axios.post("/api", { action: "LOGIN", password: pwd });
+      
+      // 修复逻辑：优先设置是否首次登录标志，确保父组件能及时捕获该状态
+      // 防止 setAuth 导致页面立即跳转从而跳过了 ForcePasswordChange 的渲染
+      if (res.data.isFirstLogin) {
+        setIsFirstLogin(true);
+      }
+      
+      localStorage.setItem("aero_auth", res.data.token);
+      setAuth(res.data.token);
+      
+    } catch (e) {
+      setDialogState({
+        open: true,
+        title: "登錄失敗",
+        content: "密碼錯誤或網絡異常，請檢查後重試。"
+      });
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#FBFDF8] dark:bg-[#111318] p-6 text-gray-900 dark:text-white">
+      <AlertDialog 
+        open={dialogState.open} 
+        title={dialogState.title} 
+        content={dialogState.content} 
+        onConfirm={() => setDialogState({ ...dialogState, open: false })}
+      />
+      
+      <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="w-full max-w-sm bg-[#F0F4EF] dark:bg-[#202522] p-8 rounded-[32px] space-y-8 shadow-xl relative overflow-hidden">
+        {loading && (
+          <div className="absolute inset-0 bg-white/50 dark:bg-black/50 z-10 flex items-center justify-center backdrop-blur-[2px]">
+            <div className="w-8 h-8 border-4 border-[var(--md-primary)] border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        )}
+        
+        <div className="text-center space-y-3">
+          <Shield className="w-16 h-16 mx-auto text-[#006C4C]" />
+          <h1 className="text-3xl font-bold">AeroNode</h1>
+          <p className="text-xs text-gray-500">請輸入管理密碼</p>
+        </div>
+        
+        <input 
+          type="password" 
+          value={pwd} 
+          disabled={loading}
+          onChange={e => setPwd(e.target.value)} 
+          onKeyDown={e => e.key === 'Enter' && handleLogin()} 
+          className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl text-center focus:outline-none focus:ring-2 ring-[var(--md-primary)] transition-all" 
+          placeholder="••••••••" 
+        />
+        
+        <motion.button 
+          whileTap={{ scale: 0.95 }} 
+          onClick={handleLogin} 
+          disabled={loading}
+          className="w-full py-4 bg-[var(--md-primary)] text-[var(--md-on-primary)] rounded-full font-bold shadow-lg shadow-[var(--md-primary)]/20 hover:shadow-[var(--md-primary)]/40 transition-shadow"
+        >
+          {loading ? "驗證中..." : "登錄"}
+        </motion.button>
+      </motion.div>
+    </div>
+  );
+}
+
+// 强制改密码弹窗
 function ForcePasswordChange({ api, setAuth, onComplete }: any) {
   const [pwd, setPwd] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [alert, setAlert] = useState<{ open: boolean, type: "error" | "success", title: string, content: string }>({ 
+    open: false, type: "error", title: "", content: "" 
+  });
+
   const handleSave = async () => {
-    if(pwd.length < 6) return alert("密碼太短，請至少輸入6位");
-    const res = await api("CHANGE_PASSWORD", { newPassword: pwd });
-    localStorage.setItem("aero_auth", res.token);
-    setAuth(res.token);
-    onComplete();
+    if (pwd.length < 6) {
+      setAlert({ open: true, type: "error", title: "密碼太短", content: "為了您的安全，新密碼長度至少需要 6 位。" });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await api("CHANGE_PASSWORD", { newPassword: pwd });
+      // 更新本地存储和状态
+      localStorage.setItem("aero_auth", res.token);
+      setAuth(res.token);
+      
+      // 成功提示
+      setAlert({ 
+        open: true, 
+        type: "success", 
+        title: "修改成功", 
+        content: "您的密碼已更新，請使用新密碼登錄。" 
+      });
+    } catch (e) {
+      setAlert({ open: true, type: "error", title: "修改失敗", content: "服務器拒絕了修改請求，請稍後重試。" });
+      setLoading(false);
+    }
   };
+
   return (
     <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-      <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-[#F0F4EF] dark:bg-[#202522] p-8 rounded-[32px] w-full max-w-sm space-y-6 border border-red-500/30">
-        <h2 className="text-2xl font-bold text-red-500 flex items-center gap-2"><KeyRound className="w-6 h-6"/> 安全警告</h2>
-        <p className="text-sm">您正在使用默認密碼。為確保安全，請立即設置新密碼。</p>
-        <input type="password" value={pwd} onChange={e=>setPwd(e.target.value)} className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl text-center focus:outline-none" placeholder="輸入新密碼" />
-        <motion.button whileTap={{ scale: 0.95 }} onClick={handleSave} className="w-full py-4 bg-red-500 text-white rounded-full font-bold">確認修改</motion.button>
+      <AlertDialog 
+        open={alert.open} 
+        type={alert.type}
+        title={alert.title} 
+        content={alert.content} 
+        onConfirm={() => {
+          setAlert({ ...alert, open: false });
+          if (alert.type === "success") {
+            onComplete(); // 只有在用户点击确认成功后，才关闭整个强制改密窗口
+          }
+        }}
+      />
+
+      <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-[#F0F4EF] dark:bg-[#202522] p-8 rounded-[32px] w-full max-w-sm space-y-6 border-2 border-red-500/20 shadow-2xl relative overflow-hidden">
+        {loading && (
+          <div className="absolute inset-0 bg-[#F0F4EF]/80 dark:bg-[#202522]/80 z-10 flex items-center justify-center">
+            <div className="w-8 h-8 border-4 border-red-500 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <h2 className="text-2xl font-bold text-red-500 flex items-center gap-2">
+            <KeyRound className="w-6 h-6"/> 安全警告
+          </h2>
+          <p className="text-sm text-gray-600 dark:text-gray-300">
+            您正在使用初始默認密碼。為確保系統安全，<span className="font-bold text-red-500">必須</span>設置一個新密碼才能繼續。
+          </p>
+        </div>
+
+        <input 
+          type="password" 
+          value={pwd} 
+          onChange={e => setPwd(e.target.value)} 
+          className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl text-center focus:outline-none focus:ring-2 ring-red-500 transition-all text-lg" 
+          placeholder="輸入新密碼 (至少6位)" 
+        />
+        
+        <motion.button 
+          whileTap={{ scale: 0.95 }} 
+          onClick={handleSave} 
+          disabled={loading}
+          className="w-full py-4 bg-red-500 text-white rounded-full font-bold shadow-lg shadow-red-500/30 hover:bg-red-600 transition-colors"
+        >
+          {loading ? "保存中..." : "確認並修改"}
+        </motion.button>
       </motion.div>
     </div>
   );
