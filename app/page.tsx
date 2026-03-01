@@ -211,270 +211,283 @@ function ForcePasswordChange({ api, setAuth, onComplete }: any) {
 }
 //首页仪表盘
 function DashboardView({ nodes, allRules }: any) {
-  // 视图切换状态: 'classic' (原有经典), 'modern' (新设计的MD3仪表盘), 'table' (表格视图)
-  const[viewMode, setViewMode] = useState('modern');
+  // 定义视图模式状态: 'new-card' | 'classic' | 'table'
+  const [viewMode, setViewMode] = React.useState('new-card');
 
-  // 用于现代视图的 MD3 风格圆环进度条组件
-  const CircularProgress = ({ value, label, isOnline }: any) => {
-    const radius = 24;
+  // 顶部总览卡片组件
+  const SummaryCard = ({ title, value }: { title: string, value: number }) => (
+    <motion.div 
+      whileHover={{ scale: 1.02 }} 
+      className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[28px] text-center flex flex-col justify-center items-center h-full relative overflow-hidden"
+    >
+      <div className="absolute inset-0 bg-[var(--md-primary)] opacity-[0.03] dark:opacity-[0.08]"></div>
+      <div className="text-sm text-gray-500 dark:text-gray-400 z-10">{title}</div>
+      <div className="text-3xl font-bold text-[var(--md-primary)] z-10 mt-2">{value}</div>
+    </motion.div>
+  );
+
+  // 圆形进度条组件 (MD3风格)
+  const CircleProgress = ({ percent, label, sublabel, color = "text-[var(--md-primary)]" }: any) => {
+    const radius = 28;
     const circumference = 2 * Math.PI * radius;
-    const strokeDashoffset = circumference - (value / 100) * circumference;
-
+    const offset = circumference - (Math.min(percent, 100) / 100) * circumference;
+    
     return (
-      <div className="flex flex-col items-center justify-center relative w-[64px] h-[76px]">
-        <svg className="w-[56px] h-[56px] transform -rotate-90">
-          {/* 背景轨 */}
-          <circle
-            cx="28" cy="28" r={radius}
-            stroke="currentColor" strokeWidth="5" fill="transparent"
-            className="text-black/5 dark:text-white/10"
-          />
-          {/* 进度轨 - 采用原版在线/离线 MD3 动态采色逻辑 */}
-          <motion.circle
-            cx="28" cy="28" r={radius}
-            stroke="currentColor" strokeWidth="5" fill="transparent"
-            strokeDasharray={circumference}
-            initial={{ strokeDashoffset: circumference }}
-            animate={{ strokeDashoffset }}
-            transition={{ duration: 1.2, ease: "easeOut" }}
-            strokeLinecap="round"
-            className={isOnline ? 'text-[var(--md-primary)]' : 'text-gray-400 dark:text-gray-600'}
-          />
-        </svg>
-        <div className="absolute top-[20px] text-[11px] font-bold font-mono">
-          {value.toFixed(0)}%
+      <div className="flex flex-col items-center justify-center">
+        <div className="relative w-20 h-20 flex items-center justify-center">
+          {/* 背景圆环 */}
+          <svg className="transform -rotate-90 w-full h-full">
+            <circle
+              className="text-[var(--md-surface-variant)] dark:text-gray-700"
+              strokeWidth="6"
+              stroke="currentColor"
+              fill="transparent"
+              r={radius}
+              cx="40"
+              cy="40"
+            />
+            {/* 进度圆环 */}
+            <circle
+              className={`${color} transition-all duration-1000 ease-out`}
+              strokeWidth="6"
+              strokeDasharray={circumference}
+              strokeDashoffset={offset}
+              strokeLinecap="round"
+              stroke="currentColor"
+              fill="transparent"
+              r={radius}
+              cx="40"
+              cy="40"
+            />
+          </svg>
+          <div className="absolute flex flex-col items-center">
+            <span className={`text-sm font-bold ${color}`}>{percent.toFixed(0)}<span className="text-[10px]">%</span></span>
+          </div>
         </div>
-        <span className="text-[10px] text-gray-500 absolute bottom-0 font-medium tracking-wider">
-          {label}
-        </span>
+        <span className="text-xs text-gray-500 dark:text-gray-400 font-medium mt-1">{label}</span>
       </div>
     );
   };
 
+  // 视图切换按钮组件
+  const ViewToggle = () => (
+    <div className="flex justify-end mb-4">
+      <div className="bg-[#E0E4DE] dark:bg-[#2A2D2A] p-1 rounded-full flex gap-1">
+        {[
+          { id: 'new-card', icon: 'grid_view', label: '卡片' },
+          { id: 'classic', icon: 'dashboard', label: '經典' },
+          { id: 'table', icon: 'table_rows', label: '列表' }
+        ].map((mode) => (
+          <button
+            key={mode.id}
+            onClick={() => setViewMode(mode.id)}
+            className={`px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 transition-all ${
+              viewMode === mode.id
+                ? 'bg-[var(--md-primary)] text-[var(--md-on-primary)] shadow-md'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-white/5'
+            }`}
+          >
+            {/* 这里假设使用了Material Symbols/Icons，如无图标库可只显示文字 */}
+            <span className="material-symbols-rounded text-sm hidden sm:block">{mode.icon}</span>
+            <span>{mode.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
-      {/* 顶部统计卡片 (保留原有) */}
+      {/* 顶部统计区域 */}
       <div className="grid grid-cols-2 gap-4">
-        <motion.div whileHover={{ scale: 1.02 }} className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[28px] text-center">
-          <div className="text-sm text-gray-500">總節點</div>
-          <div className="text-3xl font-bold text-[var(--md-primary)]">{nodes.length}</div>
-        </motion.div>
-        <motion.div whileHover={{ scale: 1.02 }} className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[28px] text-center">
-          <div className="text-sm text-gray-500">運行規則</div>
-          <div className="text-3xl font-bold text-[var(--md-primary)]">{Object.values(allRules).flat().length}</div>
-        </motion.div>
+        <SummaryCard title="總節點" value={nodes.length} />
+        <SummaryCard title="運行規則" value={Object.values(allRules).flat().length} />
       </div>
 
-      {/* 视图切换按钮 (MD3 分段按钮风格) */}
-      <div className="flex justify-center md:justify-end">
-        <div className="inline-flex bg-[#F0F4EF] dark:bg-[#202522] rounded-full p-1.5 shadow-sm">
-          {[
-            { id: 'classic', label: '經典卡片' },
-            { id: 'modern', label: '儀表板' },
-            { id: 'table', label: '詳細表格' }
-          ].map((mode) => (
-            <button
-              key={mode.id}
-              onClick={() => setViewMode(mode.id)}
-              className={`px-5 py-2 rounded-full text-sm font-bold transition-all duration-300 ${
-                viewMode === mode.id
-                  ? 'bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)] shadow-md'
-                  : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'
-              }`}
-            >
-              {mode.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* 视图切换器 */}
+      <ViewToggle />
 
       {/* 内容区域 */}
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={viewMode}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          transition={{ duration: 0.3 }}
-          className={
-            viewMode === 'table' 
-              ? '' 
-              : 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6'
-          }
-        >
-          {/* ========== 1. 现代视图 (根据图片定制的MD3风格) ========== */}
-          {viewMode === 'modern' && nodes.map((n: any) => {
-            const isOnline = n.lastSeen && (Date.now() - n.lastSeen < 60000);
-            const ramVal = parseFloat(n.stats?.ram_usage || "0");
-            const cpuVal = Math.min(parseFloat(n.stats?.cpu_load || "0.0") * 10, 100);
-            const rx = n.stats?.rx_speed || "0 B/s";
-            const tx = n.stats?.tx_speed || "0 B/s";
-
-            return (
-              <motion.div 
-                layout
-                key={`modern-${n.id}`} 
-                whileHover={{ scale: 1.02 }}
-                className="bg-[#F0F4EF] dark:bg-[#202522] rounded-[32px] p-6 relative overflow-hidden flex flex-col justify-between h-full"
-              >
-                {/* 头部：名称无箭头，保留MD3在线状态 */}
-                <div className="flex justify-between items-start mb-6">
-                  <div className="flex-1 truncate pr-2">
-                    <h3 className="text-lg font-bold truncate">{n.name}</h3>
-                  </div>
-                  <span className={`px-3 py-1 rounded-full text-[10px] font-bold shrink-0 ${isOnline ? 'bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)]' : 'bg-black/10 dark:bg-white/10 text-gray-500'}`}>
-                    {isOnline ? '在線' : '離線'}
-                  </span>
-                </div>
-                
-                {/* 主体：圆环和速率排版 */}
-                <div className="flex justify-between items-end mt-auto">
-                  {/* 左侧圆环区域 */}
-                  <div className="flex gap-4">
-                    <CircularProgress value={cpuVal} label="CPU" isOnline={isOnline} />
-                    <CircularProgress value={ramVal} label="RAM" isOnline={isOnline} />
-                  </div>
-                  
-                  {/* 右侧速率区域 (去除读写，保留上下行) */}
-                  <div className="flex flex-col gap-3 pb-1">
-                    <div className="flex items-center justify-end gap-3">
-                      <span className="text-gray-400 text-xs font-bold">↓</span>
-                      <span className="font-mono text-sm w-[72px] text-right font-medium">{rx}</span>
-                    </div>
-                    <div className="flex items-center justify-end gap-3">
-                      <span className="text-gray-400 text-xs font-bold">↑</span>
-                      <span className="font-mono text-sm w-[72px] text-right font-medium">{tx}</span>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            );
-          })}
-
-          {/* ========== 2. 原版经典视图 (完全保留原有代码的卡片样式) ========== */}
-          {viewMode === 'classic' && nodes.map((n: any) => {
-            const isOnline = n.lastSeen && (Date.now() - n.lastSeen < 60000);
-            const ram = n.stats?.ram_usage || "0";
-            const rx = n.stats?.rx_speed || "0 B/s";
-            const tx = n.stats?.tx_speed || "0 B/s";
-            const cpu = n.stats?.cpu_load || "0.0";
-
-            return (
-              <motion.div layout key={`classic-${n.id}`} className="bg-[#F0F4EF] dark:bg-[#202522] rounded-[32px] p-6 relative overflow-hidden">
-                <div className="flex justify-between items-center mb-6">
-                  <div>
-                    <h3 className="text-xl font-bold">{n.name}</h3>
-                    <p className="text-xs text-gray-500 font-mono mt-1">{n.ip}</p>
-                  </div>
-                  <span className={`px-4 py-1.5 rounded-full text-xs font-bold ${isOnline ? 'bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)]' : 'bg-gray-300 dark:bg-gray-800 text-gray-500'}`}>
-                    {isOnline ? '在線' : '離線'}
-                  </span>
-                </div>
-                
-                <div className="space-y-3 mb-6">
-                    <div className="space-y-1">
-                        <div className="flex justify-between text-xs text-gray-500">
-                            <span>CPU 負載</span>
-                            <span>{Math.min(parseFloat(cpu)*10, 100).toFixed(1)}%</span>
-                        </div>
-                        <div className="h-2 w-full bg-gray-200 dark:bg-black/20 rounded-full overflow-hidden">
-                            <div className="h-full bg-blue-500 rounded-full transition-all duration-1000" style={{ width: `${Math.min(parseFloat(cpu)*10, 100)}%` }}></div>
-                        </div>
-                    </div>
-                    <div className="space-y-1">
-                        <div className="flex justify-between text-xs text-gray-500">
-                            <span>內存使用</span>
-                            <span>{ram}%</span>
-                        </div>
-                        <div className="h-2 w-full bg-gray-200 dark:bg-black/20 rounded-full overflow-hidden">
-                            <div className="h-full bg-purple-500 rounded-full transition-all duration-1000" style={{ width: `${ram}%` }}></div>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                   <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
-                     <span className="text-xs text-gray-500 mb-1">↓ 下載速率</span>
-                     <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">{rx}</span>
-                   </div>
-                   <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
-                     <span className="text-xs text-gray-500 mb-1">↑ 上傳速率</span>
-                     <span className="font-mono text-sm font-bold text-blue-600 dark:text-blue-400">{tx}</span>
-                   </div>
-                </div>
-              </motion.div>
-            );
-          })}
-
-          {/* ========== 3. 表格视图 (MD3 大圆角表单风格) ========== */}
-          {viewMode === 'table' && (
-            <motion.div layout className="bg-[#F0F4EF] dark:bg-[#202522] rounded-[32px] overflow-hidden">
+      <div className="min-h-[300px]">
+        <AnimatePresence mode="wait">
+          {viewMode === 'table' ? (
+            /* 表格视图 */
+            <motion.div
+              key="table"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="bg-[#F0F4EF] dark:bg-[#202522] rounded-[28px] overflow-hidden shadow-sm"
+            >
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse whitespace-nowrap">
+                <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="bg-black/5 dark:bg-white/5 border-b border-black/5 dark:border-white/5">
-                      <th className="p-5 text-sm font-bold text-gray-500">節點名稱</th>
-                      <th className="p-5 text-sm font-bold text-gray-500">狀態</th>
-                      <th className="p-5 text-sm font-bold text-gray-500">CPU</th>
-                      <th className="p-5 text-sm font-bold text-gray-500">內存</th>
-                      <th className="p-5 text-sm font-bold text-gray-500">↓ 下載</th>
-                      <th className="p-5 text-sm font-bold text-gray-500">↑ 上傳</th>
+                    <tr className="bg-black/5 dark:bg-white/5 text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">
+                      <th className="p-4 font-medium">狀態</th>
+                      <th className="p-4 font-medium">名稱</th>
+                      <th className="p-4 font-medium">IP 地址</th>
+                      <th className="p-4 font-medium">處理器</th>
+                      <th className="p-4 font-medium">記憶體</th>
+                      <th className="p-4 font-medium text-right">下載</th>
+                      <th className="p-4 font-medium text-right">上傳</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-black/5 dark:divide-white/5">
                     {nodes.map((n: any) => {
                       const isOnline = n.lastSeen && (Date.now() - n.lastSeen < 60000);
-                      const ramVal = parseFloat(n.stats?.ram_usage || "0");
-                      const cpuVal = Math.min(parseFloat(n.stats?.cpu_load || "0.0") * 10, 100);
+                      const ram = parseFloat(n.stats?.ram_usage || "0");
+                      const cpu = parseFloat(n.stats?.cpu_load || "0.0") * 10;
                       
                       return (
-                        <motion.tr 
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          key={`table-${n.id}`} 
-                          className="border-b border-black/5 dark:border-white/5 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                        >
-                          <td className="p-5">
-                            <div className="font-bold text-base">{n.name}</div>
-                            <div className="text-xs text-gray-500 font-mono mt-0.5">{n.ip}</div>
+                        <tr key={n.id} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+                          <td className="p-4">
+                            <span className={`inline-block w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-red-500'}`}></span>
                           </td>
-                          <td className="p-5">
-                            <span className={`px-3 py-1 rounded-full text-xs font-bold ${isOnline ? 'bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)]' : 'bg-black/10 dark:bg-white/10 text-gray-500'}`}>
-                              {isOnline ? '在線' : '離線'}
-                            </span>
-                          </td>
-                          <td className="p-5">
-                            <div className="w-20 flex items-center gap-2">
-                              <div className="h-1.5 w-full bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
-                                <div className="h-full bg-[var(--md-primary)] rounded-full" style={{ width: `${cpuVal}%` }} />
-                              </div>
-                              <span className="text-xs font-mono text-gray-500">{cpuVal.toFixed(0)}%</span>
-                            </div>
-                          </td>
-                          <td className="p-5">
-                            <div className="w-20 flex items-center gap-2">
-                              <div className="h-1.5 w-full bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
-                                <div className="h-full bg-[var(--md-primary)] rounded-full" style={{ width: `${ramVal}%` }} />
-                              </div>
-                              <span className="text-xs font-mono text-gray-500">{ramVal.toFixed(0)}%</span>
-                            </div>
-                          </td>
-                          <td className="p-5 font-mono text-sm text-emerald-600 dark:text-emerald-400 font-medium">
-                            {n.stats?.rx_speed || "0 B/s"}
-                          </td>
-                          <td className="p-5 font-mono text-sm text-blue-600 dark:text-blue-400 font-medium">
-                            {n.stats?.tx_speed || "0 B/s"}
-                          </td>
-                        </motion.tr>
+                          <td className="p-4 font-bold text-[var(--md-primary)]">{n.name}</td>
+                          <td className="p-4 text-xs font-mono text-gray-500">{n.ip}</td>
+                          <td className="p-4 text-xs">{Math.min(cpu, 100).toFixed(1)}%</td>
+                          <td className="p-4 text-xs">{ram.toFixed(1)}%</td>
+                          <td className="p-4 text-xs font-mono text-right text-emerald-600 dark:text-emerald-400">{n.stats?.rx_speed || "0 B/s"}</td>
+                          <td className="p-4 text-xs font-mono text-right text-blue-600 dark:text-blue-400">{n.stats?.tx_speed || "0 B/s"}</td>
+                        </tr>
                       );
                     })}
                   </tbody>
                 </table>
               </div>
             </motion.div>
+          ) : (
+            /* 网格视图容器 */
+            <motion.div 
+              key="grid"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className={`grid gap-4 ${viewMode === 'new-card' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-2' : 'grid-cols-1 md:grid-cols-2'}`}
+            >
+              {nodes.map((n: any) => {
+                const isOnline = n.lastSeen && (Date.now() - n.lastSeen < 60000);
+                const ramVal = parseFloat(n.stats?.ram_usage || "0");
+                const cpuRaw = parseFloat(n.stats?.cpu_load || "0.0");
+                const cpuVal = Math.min(cpuRaw * 10, 100);
+                const rx = n.stats?.rx_speed || "0 B/s";
+                const tx = n.stats?.tx_speed || "0 B/s";
+
+                // 新版 MD3 卡片视图
+                if (viewMode === 'new-card') {
+                  return (
+                    <motion.div 
+                      key={n.id}
+                      layout
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-[#F0F4EF] dark:bg-[#202522] rounded-[32px] p-6 relative overflow-hidden group"
+                    >
+                      {/* 背景微光效果 */}
+                      <div className={`absolute top-0 right-0 w-32 h-32 bg-[var(--md-primary)] blur-[60px] opacity-10 rounded-full pointer-events-none transition-opacity duration-500 ${isOnline ? 'opacity-20' : 'opacity-0'}`}></div>
+
+                      <div className="flex flex-col h-full justify-between gap-6">
+                        {/* 头部：名称与状态 */}
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h3 className="text-2xl font-bold tracking-tight text-[var(--md-on-surface)]">{n.name}</h3>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 font-mono mt-1 opacity-80">{n.ip}</p>
+                          </div>
+                          <div className={`px-3 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase transition-colors duration-300 ${
+                            isOnline 
+                              ? 'bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)]' 
+                              : 'bg-gray-200 dark:bg-gray-700 text-gray-500'
+                          }`}>
+                            {isOnline ? '在線' : '離線'}
+                          </div>
+                        </div>
+
+                        {/* 中部：仪表盘圆环 (CPU & RAM) */}
+                        <div className="flex items-center justify-around py-2">
+                           <CircleProgress 
+                             percent={cpuVal} 
+                             label="處理器" 
+                             color={isOnline ? "text-[var(--md-primary)]" : "text-gray-400"}
+                           />
+                           <CircleProgress 
+                             percent={ramVal} 
+                             label="記憶體" 
+                             color={isOnline ? "text-[var(--md-primary)]" : "text-gray-400"}
+                           />
+                        </div>
+
+                        {/* 底部：网络数据 */}
+                        <div className="bg-white/50 dark:bg-black/20 rounded-2xl p-4 flex justify-between items-center backdrop-blur-sm">
+                          <div className="flex flex-col items-start">
+                            <span className="text-[10px] text-gray-500 uppercase font-bold mb-0.5">下載</span>
+                            <span className="text-sm font-mono font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                              <span className="text-xs">↓</span> {rx}
+                            </span>
+                          </div>
+                          <div className="h-8 w-[1px] bg-gray-200 dark:bg-gray-700 mx-2"></div>
+                          <div className="flex flex-col items-end">
+                            <span className="text-[10px] text-gray-500 uppercase font-bold mb-0.5">上傳</span>
+                            <span className="text-sm font-mono font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                              {tx} <span className="text-xs">↑</span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                }
+
+                // 经典卡片视图 (保留原有逻辑，优化繁体与排版)
+                return (
+                  <motion.div key={n.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-[#F0F4EF] dark:bg-[#202522] rounded-[32px] p-6 relative overflow-hidden">
+                    <div className="flex justify-between items-center mb-6">
+                      <div>
+                        <h3 className="text-xl font-bold">{n.name}</h3>
+                        <p className="text-xs text-gray-500 font-mono mt-1">{n.ip}</p>
+                      </div>
+                      <span className={`px-4 py-1.5 rounded-full text-xs font-bold ${isOnline ? 'bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)]' : 'bg-gray-300 dark:bg-gray-800 text-gray-500'}`}>
+                        {isOnline ? '在線' : '離線'}
+                      </span>
+                    </div>
+                    
+                    <div className="space-y-3 mb-6">
+                        <div className="space-y-1">
+                            <div className="flex justify-between text-xs text-gray-500">
+                                <span>處理器負載</span>
+                                <span>{cpuVal.toFixed(1)}%</span>
+                            </div>
+                            <div className="h-2 w-full bg-gray-200 dark:bg-black/20 rounded-full overflow-hidden">
+                                <div className="h-full bg-blue-500 rounded-full transition-all duration-1000" style={{ width: `${Math.min(cpuVal, 100)}%` }}></div>
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            <div className="flex justify-between text-xs text-gray-500">
+                                <span>記憶體使用</span>
+                                <span>{ramVal}%</span>
+                            </div>
+                            <div className="h-2 w-full bg-gray-200 dark:bg-black/20 rounded-full overflow-hidden">
+                                <div className="h-full bg-purple-500 rounded-full transition-all duration-1000" style={{ width: `${ramVal}%` }}></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                       <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
+                         <span className="text-xs text-gray-500 mb-1">↓ 下載速率</span>
+                         <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">{rx}</span>
+                       </div>
+                       <div className="bg-white dark:bg-[#111318] py-4 rounded-2xl flex flex-col items-center justify-center">
+                         <span className="text-xs text-gray-500 mb-1">↑ 上傳速率</span>
+                         <span className="font-mono text-sm font-bold text-blue-600 dark:text-blue-400">{tx}</span>
+                       </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </motion.div>
           )}
-        </motion.div>
-      </AnimatePresence>
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
