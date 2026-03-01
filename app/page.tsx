@@ -152,14 +152,63 @@ export default function App() {
     </div>
   );
 }
-
+//底部导航栏按钮动画逻辑实现
 function NavItem({ icon, label, active, onClick }: any) {
   return (
-    <motion.button whileTap={{ scale: 0.9 }} onClick={onClick} className="flex flex-col items-center flex-1 gap-1 relative outline-none">
-      <motion.div layout className={`px-5 py-1 rounded-full transition-colors ${active ? 'bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)]' : 'text-gray-500'}`}>
-        {icon}
-      </motion.div>
-      <span className={`text-[12px] font-medium ${active ? 'text-[var(--md-primary)] font-bold' : 'text-gray-500'}`}>{label}</span>
+    <motion.button
+      layout // 启用布局动画，确保文字出现时容器平滑调整尺寸
+      whileTap={{ scale: 0.95 }} // 点击时的微缩反馈
+      onClick={onClick}
+      className="flex flex-col items-center justify-center flex-1 gap-1 relative outline-none py-2"
+    >
+      {/* 图标容器：设置为 relative 以便放置绝对定位的背景 */}
+      <div className="relative px-5 py-1 flex items-center justify-center">
+        
+        {/* 1. 激活背景 (胶囊状波纹) */}
+        <AnimatePresence>
+          {active && (
+            <motion.div
+              layoutId="nav-item-active-indicator" // 如果有多个NavItem，这能实现跨按钮的滑动效果，单个使用也能保证平滑
+              initial={{ opacity: 0, scale: 0.5 }} // 初始状态：透明且缩小（模拟从中心开始）
+              animate={{ opacity: 1, scale: 1 }}   // 激活状态：完全显示且填充
+              exit={{ opacity: 0, scale: 0.5 }}    // 退出状态：缩小并消失
+              transition={{ 
+                type: "spring", 
+                stiffness: 400, 
+                damping: 30 
+              }} 
+              className="absolute inset-0 bg-[var(--md-primary-container)] rounded-full" 
+            />
+          )}
+        </AnimatePresence>
+
+        {/* 2. 图标层 */}
+        {/* z-10 确保图标始终位于背景之上 */}
+        <span 
+          className={`relative z-10 transition-colors duration-200 ${
+            active 
+              ? 'text-[var(--md-on-primary-container)]' // 激活时：取主容器上的对比色
+              : 'text-gray-500'                          // 未激活时：灰色
+          }`}
+        >
+          {icon}
+        </span>
+      </div>
+
+      {/* 3. 文字标签 (仅在激活时出现) */}
+      <AnimatePresence>
+        {active && (
+          <motion.span
+            initial={{ opacity: 0, y: 5, height: 0 }} // 初始：隐形、向下偏移、高度为0
+            animate={{ opacity: 1, y: 0, height: "auto" }} // 激活：浮现、回正
+            exit={{ opacity: 0, y: 5, height: 0 }}    // 退出：下沉消失
+            transition={{ duration: 0.2, delay: 0.05 }} // 稍微延迟，让背景先动
+            className="text-[12px] font-bold text-[var(--md-primary)] overflow-hidden whitespace-nowrap"
+          >
+            {label}
+          </motion.span>
+        )}
+      </AnimatePresence>
     </motion.button>
   );
 }
