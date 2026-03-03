@@ -1,4 +1,5 @@
 import { kv } from "@vercel/kv";
+//import { kv } from "@/lib/kv"; Docker版专用库
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 
@@ -95,7 +96,7 @@ export async function POST(req: Request) {
 
     // 獲取指定節點的規則
     if (action === "GET_RULES") {
-        return NextResponse.json(await kv.lrange(`rules:${data.nodeId}`, 0, -1) || []);
+        return NextResponse.json(await kv.lrange(`rules:${data.nodeId}`, 0, -1) ||[]);
     }
 
     // 修改管理員密碼
@@ -110,7 +111,7 @@ export async function POST(req: Request) {
         const nodes = await kv.hgetall("nodes") || {}; 
         const rules: any = {}; 
         for (const id of Object.keys(nodes)) {
-            rules[id] = await kv.lrange(`rules:${id}`, 0, -1) || [];
+            rules[id] = await kv.lrange(`rules:${id}`, 0, -1) ||[];
         }
         return NextResponse.json({ nodes, rules }); 
     }
@@ -135,6 +136,33 @@ export async function POST(req: Request) {
             await kv.set(`cmd:${nodeId}`, "UPDATE"); 
         } 
         return NextResponse.json({ success: true }); 
+    }
+
+    // ==========================================
+    // 新增：向節點下發診斷測試請求
+    // ==========================================
+    if (action === "DIAGNOSE_RULE") {
+        const { nodeId, dest_ip, dest_port } = data;
+        // 創建一個唯一的任務 ID
+        const taskId = `diag_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        // 將請求存入 KV 數據庫，設置 60 秒 TTL 避免長期堆積
+        await kv.set(`diag_req:${nodeId}`, { taskId, dest_ip, dest_port }, { ex: 60 });
+        return NextResponse.json({ success: true, taskId });
+    }
+
+    // ==========================================
+    // 新增：前端輪詢獲取診斷結果
+    // ==========================================
+    if (action === "GET_DIAGNOSE_RESULT") {
+        const { taskId } = data;
+        const result = await kv.get(`diag_res:${taskId}`);
+        if (result) {
+            // 取出後立即銷毀防止數據堆積和下次測試衝突
+            await kv.del(`diag_res:${taskId}`);
+            return NextResponse.json({ success: true, result });
+        }
+        // 如果沒有結果，代表 Agent 還在測試中
+        return NextResponse.json({ success: false, status: "pending" });
     }
 
     return NextResponse.json({ error: "Unknown Action" }, { status: 400 });
