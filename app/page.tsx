@@ -14,18 +14,7 @@ import {
 } from "lucide-react";
 
 
-// 如果你的项目开启了严格模式，加入这段全局声明可以防止 TypeScript 对 Web Components 报错（MD3组件）
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      'md-filled-button': any;
-      'md-icon-button': any;
-      'md-fab': any;
-      'md-ripple': any;
-      'md-icon': any;
-    }
-  }
-}
+
 const THEMES = {
   emerald: { primary: "#006C4C", onPrimary: "#FFFFFF", primaryContainer: "#89F8C7", onPrimaryContainer: "#002114" },
   ocean:   { primary: "#0061A4", onPrimary: "#FFFFFF", primaryContainer: "#D1E4FF", onPrimaryContainer: "#001D36" },
@@ -231,12 +220,11 @@ function AlertDialog({ open, title, content, type = "error", onConfirm, onCancel
   if (!open) return null;
   
   const isError = type === "error";
-  const isConfirm = !!onCancel; // 如果传入了 onCancel，说明是二次确认弹窗
+  const isConfirm = !!onCancel; 
   
-  // 保留原逻辑，同时映射 MD3 的 Design Tokens 标准颜色
   const bgColor = isError ? "bg-red-100 dark:bg-red-900/30" : "bg-green-100 dark:bg-green-900/30";
   const iconColor = isError ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400";
-  const mdPrimaryToken = isError ? "#dc2626" : "#16a34a"; // 动态替换 MD3 主色
+  const mdPrimaryToken = isError ? "#dc2626" : "#16a34a"; 
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
@@ -245,7 +233,6 @@ function AlertDialog({ open, title, content, type = "error", onConfirm, onCancel
         animate={{ opacity: 1, scale: 1 }} 
         className="w-full max-w-[320px] bg-[#F0F4EF] dark:bg-[#202522] rounded-[28px] p-6 shadow-2xl flex flex-col items-center text-center space-y-4 relative"
       >
-        {/* 1. 引入 <md-icon-button>：右上角的标准 MD3 关闭按钮交互 */}
         {isConfirm && (
           <div className="absolute top-2 right-2 text-gray-500 dark:text-gray-400">
             <md-icon-button onClick={onCancel}>
@@ -254,12 +241,11 @@ function AlertDialog({ open, title, content, type = "error", onConfirm, onCancel
           </div>
         )}
 
-        {/* 2. 引入 <md-fab>：作为顶部显眼的图标容器，自带 MD3 阴影轮廓与高斯深度 */}
         <md-fab 
-          lowered
-          class={`shadow-none ${bgColor} ${iconColor}`}
+          lowered="true"
+          className={`shadow-none ${bgColor} ${iconColor}`}
           style={{
-            '--md-fab-container-color': 'transparent', // 借用外层 Tailwind 适配深色模式的背景色
+            '--md-fab-container-color': 'transparent',
             '--md-fab-container-elevation': '0',
             'pointerEvents': 'none'
           } as React.CSSProperties}
@@ -273,7 +259,6 @@ function AlertDialog({ open, title, content, type = "error", onConfirm, onCancel
         </div>
         
         <div className="flex w-full gap-3 mt-2">
-          {/* 3. 引入 <md-ripple>：附着在自定义按钮内，提供原汁原味的丝滑波纹 */}
           {isConfirm && (
             <button 
               onClick={onCancel}
@@ -284,13 +269,12 @@ function AlertDialog({ open, title, content, type = "error", onConfirm, onCancel
             </button>
           )}
 
-          {/* 4. 引入 <md-filled-button>：标准 MD3 主行为按钮 */}
           <div className="flex-1 flex">
             <md-filled-button 
               onClick={onConfirm}
               style={{
                 width: '100%',
-                '--md-sys-color-primary': mdPrimaryToken, // 使用 MD3 Design Token 动态覆盖按钮颜色
+                '--md-sys-color-primary': mdPrimaryToken,
                 '--md-sys-color-on-primary': '#ffffff',
                 '--md-filled-button-container-shape': '9999px',
                 '--md-filled-button-label-text-font': 'inherit',
@@ -305,7 +289,6 @@ function AlertDialog({ open, title, content, type = "error", onConfirm, onCancel
     </div>
   );
 }
-
 // 登录界面
 function LoginView({ setAuth, setIsFirstLogin }: any) {
   const [pwd, setPwd] = useState("");
