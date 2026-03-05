@@ -29,6 +29,8 @@ const MdIcon = 'md-icon' as any;                         // 图标容器
 const MdIconButton = 'md-icon-button' as any;            // 图标按钮
 const MdFab = 'md-fab' as any;
 const MdRipple = 'md-ripple' as any;
+const MdFilledTonalButton: any = "md-filled-tonal-button";
+const MdElevatedButton: any = "md-elevated-button";
 
 export default function App() {
   const [auth, setAuth] = useState<string | null>(null);
