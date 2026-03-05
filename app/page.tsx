@@ -227,6 +227,97 @@ function NavItem({ icon, label, active, onClick }: any) {
   );
 }
 
+// （MD3）告诉 TypeScript 这些是合法的自定义组件标签，不要报错！
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      'md-filled-button': any;
+      'md-icon-button': any;
+      'md-fab': any;
+      'md-ripple': any;
+      'md-icon': any;
+    }
+  }
+}
+
+// 保持原函数名和入参完全不变
+function AlertDialog({ open, title, content, type = "error", onConfirm, onCancel }: any) {
+  if (!open) return null;
+  
+  const isError = type === "error";
+  const isConfirm = !!onCancel; // 如果传入了 onCancel，说明是二次确认弹窗
+  
+  const bgColor = isError ? "bg-red-100 dark:bg-red-900/30" : "bg-green-100 dark:bg-green-900/30";
+  const iconColor = isError ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400";
+  const mdPrimaryToken = isError ? "#dc2626" : "#16a34a"; // 动态替换 MD3 主色
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }} 
+        animate={{ opacity: 1, scale: 1 }} 
+        className="w-full max-w-[320px] bg-[#F0F4EF] dark:bg-[#202522] rounded-[28px] p-6 shadow-2xl flex flex-col items-center text-center space-y-4 relative"
+      >
+        {/* 右上角关闭按钮 */}
+        {isConfirm && (
+          <div className="absolute top-2 right-2 text-gray-500 dark:text-gray-400">
+            <md-icon-button onClick={onCancel}>
+              <md-icon>close</md-icon>
+            </md-icon-button>
+          </div>
+        )}
+
+        {/* 顶部 MD3 FAB 图标 */}
+        <md-fab 
+          lowered="true"
+          class={`shadow-none ${bgColor} ${iconColor}`}
+          style={{
+            '--md-fab-container-color': 'transparent',
+            '--md-fab-container-elevation': '0',
+            'pointerEvents': 'none'
+          }}
+        >
+          <md-icon slot="icon">{isError ? "error" : "check_circle"}</md-icon>
+        </md-fab>
+
+        <div>
+          <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h3>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">{content}</p>
+        </div>
+        
+        <div className="flex w-full gap-3 mt-2">
+          {/* 取消按钮（自带 MD3 涟漪） */}
+          {isConfirm && (
+            <button 
+              onClick={onCancel}
+              className="relative flex-1 py-3 rounded-full font-bold text-sm bg-gray-200 dark:bg-[#111318] text-gray-700 dark:text-gray-300 overflow-hidden"
+            >
+              <md-ripple></md-ripple>
+              取消
+            </button>
+          )}
+
+          {/* 确认/主按钮 */}
+          <div className="flex-1 flex">
+            <md-filled-button 
+              onClick={onConfirm}
+              style={{
+                width: '100%',
+                '--md-sys-color-primary': mdPrimaryToken,
+                '--md-sys-color-on-primary': '#ffffff',
+                '--md-filled-button-container-shape': '9999px',
+                '--md-filled-button-label-text-font': 'inherit',
+                '--md-filled-button-label-text-weight': 'bold',
+              }}
+            >
+              {isConfirm ? "確認" : (isError ? "重試" : "好的")}
+            </md-filled-button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
 
 // 通用 MD3 风格弹窗组件
 function AlertDialog({ open, title, content, type = "error", onConfirm, onCancel }: any) {
