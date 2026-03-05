@@ -1854,24 +1854,41 @@ function MeView({ setThemeKey, themeKey, setAuth, api, fetchAllData, THEMES }: a
   const [pwd, setPwd] = useState("");
   const [confirmPwd, setConfirmPwd] = useState("");
 
-  // 弹窗状态管理
-  const [dialog, setDialog] = useState({
-    open: false, title: "", content: "", type: "success", onConfirm: () => {}, onCancel: undefined as any
+  // 修复：显式指定泛型 <DialogState>，让 TS 知道 onCancel 是可选的
+  const [dialog, setDialog] = useState<DialogState>({
+    open: false, 
+    title: "", 
+    content: "", 
+    type: "success", 
+    onConfirm: () => {}, 
+    // onCancel 这里可以不写，或者写 undefined
   });
+
   const closeDialog = () => setDialog(prev => ({ ...prev, open: false }));
 
-  // --- 业务逻辑 ---
-  
+  // --- 逻辑处理 ---
+
   const handlePasswordChange = async () => {
-    if (pwd.length < 6) return setDialog({ open: true, title: "密碼太短", content: "密碼長度不能少於 6 位", type: "error", onConfirm: closeDialog });
-    if (pwd !== confirmPwd) return setDialog({ open: true, title: "密碼不一致", content: "兩次輸入的密碼不匹配", type: "error", onConfirm: closeDialog });
+    // 修复：现在不传 onCancel 也不会报错了
+    if (pwd.length < 6) {
+      return setDialog({ open: true, title: "密碼太短", content: "密碼長度不能少於 6 位", type: "error", onConfirm: closeDialog });
+    }
+    if (pwd !== confirmPwd) {
+      return setDialog({ open: true, title: "密碼不一致", content: "兩次輸入的密碼不匹配", type: "error", onConfirm: closeDialog });
+    }
     
     try {
       const res = await api("CHANGE_PASSWORD", { newPassword: pwd });
       setAuth(res.token);
       localStorage.setItem("aero_auth", res.token);
-      setDialog({ open: true, title: "修改成功", content: "密碼已更新，請使用新密碼登錄", type: "success", onConfirm: () => { closeDialog(); setPwd(""); setConfirmPwd(""); } });
-    } catch {
+      setDialog({ 
+        open: true, 
+        title: "修改成功", 
+        content: "密碼已更新，請使用新密碼登錄", 
+        type: "success", 
+        onConfirm: () => { closeDialog(); setPwd(""); setConfirmPwd(""); } 
+      });
+    } catch (e) {
       setDialog({ open: true, title: "修改失敗", content: "網絡錯誤或請求被拒絕", type: "error", onConfirm: closeDialog });
     }
   };
@@ -1890,8 +1907,11 @@ function MeView({ setThemeKey, themeKey, setAuth, api, fetchAllData, THEMES }: a
     e.target.value = null; 
 
     setDialog({
-      open: true, title: "危險操作", content: "導入操作將覆蓋現有所有配置，且無法撤銷。確定要繼續嗎？", type: "error",
-      onCancel: closeDialog,
+      open: true, 
+      title: "危險操作", 
+      content: "導入操作將覆蓋現有所有配置，且無法撤銷。確定要繼續嗎？", 
+      type: "error",
+      onCancel: closeDialog, // 这里传入了 onCancel，会触发双按钮模式
       onConfirm: () => {
         closeDialog();
         const reader = new FileReader();
@@ -1911,9 +1931,16 @@ function MeView({ setThemeKey, themeKey, setAuth, api, fetchAllData, THEMES }: a
 
   const handleLogout = () => {
     setDialog({
-      open: true, title: "確認退出", content: "您確定要退出當前登錄嗎？", type: "error",
+      open: true, 
+      title: "確認退出", 
+      content: "您確定要退出當前登錄嗎？", 
+      type: "error",
       onCancel: closeDialog,
-      onConfirm: () => { closeDialog(); localStorage.removeItem("aero_auth"); setAuth(null); }
+      onConfirm: () => { 
+        closeDialog(); 
+        localStorage.removeItem("aero_auth"); 
+        setAuth(null); 
+      }
     });
   };
 
@@ -1960,12 +1987,11 @@ function MeView({ setThemeKey, themeKey, setAuth, api, fetchAllData, THEMES }: a
           </div>
         </div>
 
-        {/* 3. 主题配色 (修复核心：直接处理 Object.entries 且增加 md-ripple) */}
+        {/* 3. 主题配色 */}
         <div className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[32px] space-y-4">
           <h3 className="font-bold flex items-center gap-2 text-[var(--md-sys-color-on-surface)]">
             <Palette className="w-5 h-5 text-[var(--md-sys-color-primary)]"/> 面板主題配色
           </h3>
-          {/* 增加容错检查，防止 THEMES 为空导致界面空白 */}
           <div className="grid grid-cols-4 sm:grid-cols-6 gap-3">
             {THEMES && Object.entries(THEMES).map(([key, colors]: any) => (
               <div 
@@ -1977,7 +2003,7 @@ function MeView({ setThemeKey, themeKey, setAuth, api, fetchAllData, THEMES }: a
                 `}
                 style={{ backgroundColor: colors.primary, borderColor: colors.primaryContainer }}
               >
-                {/* 这里的 MdRipple 提供了点击波纹效果，且不需要改变你原有的 DOM 结构 */}
+                {/* 波纹效果 */}
                 {/* @ts-ignore */}
                 <MdRipple />
                 
@@ -2001,7 +2027,6 @@ function MeView({ setThemeKey, themeKey, setAuth, api, fetchAllData, THEMES }: a
 
       </div>
 
-      {/* 挂载全局弹窗 */}
       <AlertDialog {...dialog} />
     </>
   );
