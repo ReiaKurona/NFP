@@ -13,6 +13,20 @@ import {
   CheckCircle,Grid,XCircle, Info
 } from "lucide-react";
 
+
+// 如果你的项目开启了严格模式，加入这段全局声明可以防止 TypeScript 对 Web Components 报错
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      'md-filled-button': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
+      'md-icon-button': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
+      'md-fab': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
+      'md-ripple': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
+      'md-icon': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
+    }
+  }
+}
+
 const THEMES = {
   emerald: { primary: "#006C4C", onPrimary: "#FFFFFF", primaryContainer: "#89F8C7", onPrimaryContainer: "#002114" },
   ocean:   { primary: "#0061A4", onPrimary: "#FFFFFF", primaryContainer: "#D1E4FF", onPrimaryContainer: "#001D36" },
@@ -212,34 +226,83 @@ function NavItem({ icon, label, active, onClick }: any) {
     </motion.button>
   );
 }
+
+
 // 通用 MD3 风格弹窗组件
-function AlertDialog({ open, title, content, type = "error", onConfirm }: any) {
+function AlertDialog({ open, title, content, type = "error", onConfirm, onCancel }: any) {
   if (!open) return null;
+  
   const isError = type === "error";
+  const isConfirm = !!onCancel; // 如果传入了 onCancel，说明是二次确认弹窗
+  
+  // 保留原逻辑，同时映射 MD3 的 Design Tokens 标准颜色
   const bgColor = isError ? "bg-red-100 dark:bg-red-900/30" : "bg-green-100 dark:bg-green-900/30";
   const iconColor = isError ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400";
-  const btnColor = isError ? "bg-red-600 text-white" : "bg-green-600 text-white";
+  const mdPrimaryToken = isError ? "#dc2626" : "#16a34a"; // 动态替换 MD3 主色
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <motion.div 
         initial={{ opacity: 0, scale: 0.95 }} 
         animate={{ opacity: 1, scale: 1 }} 
-        className="w-full max-w-[320px] bg-[#F0F4EF] dark:bg-[#202522] rounded-[28px] p-6 shadow-2xl flex flex-col items-center text-center space-y-4"
+        className="w-full max-w-[320px] bg-[#F0F4EF] dark:bg-[#202522] rounded-[28px] p-6 shadow-2xl flex flex-col items-center text-center space-y-4 relative"
       >
-        <div className={`w-12 h-12 rounded-full flex items-center justify-center ${bgColor} ${iconColor}`}>
-          {isError ? <AlertCircle className="w-6 h-6" /> : <CheckCircle2 className="w-6 h-6" />}
-        </div>
+        {/* 1. 引入 <md-icon-button>：右上角的标准 MD3 关闭按钮交互 */}
+        {isConfirm && (
+          <div className="absolute top-2 right-2 text-gray-500 dark:text-gray-400">
+            <md-icon-button onClick={onCancel}>
+              <md-icon>close</md-icon>
+            </md-icon-button>
+          </div>
+        )}
+
+        {/* 2. 引入 <md-fab>：作为顶部显眼的图标容器，自带 MD3 阴影轮廓与高斯深度 */}
+        <md-fab 
+          lowered
+          class={`shadow-none ${bgColor} ${iconColor}`}
+          style={{
+            '--md-fab-container-color': 'transparent', // 借用外层 Tailwind 适配深色模式的背景色
+            '--md-fab-container-elevation': '0',
+            'pointerEvents': 'none'
+          } as React.CSSProperties}
+        >
+          <md-icon slot="icon">{isError ? "error" : "check_circle"}</md-icon>
+        </md-fab>
+
         <div>
           <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h3>
           <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">{content}</p>
         </div>
-        <button 
-          onClick={onConfirm}
-          className={`w-full py-3 rounded-full font-medium text-sm transition-transform active:scale-95 ${btnColor}`}
-        >
-          {isError ? "重试" : "好的"}
-        </button>
+        
+        <div className="flex w-full gap-3 mt-2">
+          {/* 3. 引入 <md-ripple>：附着在自定义按钮内，提供原汁原味的丝滑波纹 */}
+          {isConfirm && (
+            <button 
+              onClick={onCancel}
+              className="relative flex-1 py-3 rounded-full font-bold text-sm bg-gray-200 dark:bg-[#111318] text-gray-700 dark:text-gray-300 overflow-hidden"
+            >
+              <md-ripple></md-ripple>
+              取消
+            </button>
+          )}
+
+          {/* 4. 引入 <md-filled-button>：标准 MD3 主行为按钮 */}
+          <div className="flex-1 flex">
+            <md-filled-button 
+              onClick={onConfirm}
+              style={{
+                width: '100%',
+                '--md-sys-color-primary': mdPrimaryToken, // 使用 MD3 Design Token 动态覆盖按钮颜色
+                '--md-sys-color-on-primary': '#ffffff',
+                '--md-filled-button-container-shape': '9999px',
+                '--md-filled-button-label-text-font': 'inherit',
+                '--md-filled-button-label-text-weight': 'bold',
+              } as React.CSSProperties}
+            >
+              {isConfirm ? "確認" : (isError ? "重試" : "好的")}
+            </md-filled-button>
+          </div>
+        </div>
       </motion.div>
     </div>
   );
