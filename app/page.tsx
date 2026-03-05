@@ -1848,72 +1848,81 @@ function RulesView({ nodes, allRules, api, fetchAllData }: any) {
 //设置页面
 function MeView({ setThemeKey, themeKey, setAuth, api, fetchAllData, THEMES }: any) {
   const [pwd, setPwd] = useState("");
-  const [confirmPwd, setConfirmPwd] = useState(""); // 优化：增加确认密码逻辑
-
+  const [rePwd, setRePwd] = useState("");
+  
   // 统一弹窗状态管理
-  const [dialog, setDialog] = useState({
-    open: false,
-    title: "",
-    content: "",
-    type: "success", // "error" | "success"
-    onConfirm: () => {},
-    onCancel: undefined as any // 传函数则启用二次确认
-  });
+  const [dialog, setDialog] = useState<any>({ open: false });
 
-  const closeDialog = () => setDialog((prev) => ({ ...prev, open: false }));
+  const closeDialog = () => setDialog({ ...dialog, open: false });
 
-  // 1. 处理密码修改
+  // 1. 密码修改逻辑优化
   const handlePasswordChange = async () => {
-    if (pwd.length < 6) {
-      return setDialog({ open: true, title: "密碼太短", content: "新密碼長度至少需要 6 位字符", type: "error", onConfirm: closeDialog, onCancel: undefined });
+    if (!pwd || pwd.length < 6) {
+      setDialog({ 
+        open: true, title: "密碼太短", content: "為了安全起見，新密碼長度至少需要 6 位。", type: "error", 
+        onConfirm: closeDialog 
+      });
+      return;
     }
-    if (pwd !== confirmPwd) {
-      return setDialog({ open: true, title: "密碼不一致", content: "兩次輸入的密碼不相同，請重新輸入", type: "error", onConfirm: closeDialog, onCancel: undefined });
+    if (pwd !== rePwd) {
+      setDialog({ 
+        open: true, title: "密碼不一致", content: "兩次輸入的密碼不匹配，請重新輸入。", type: "error", 
+        onConfirm: closeDialog 
+      });
+      return;
     }
 
     try {
       const res = await api("CHANGE_PASSWORD", { newPassword: pwd });
       setAuth(res.token);
       localStorage.setItem("aero_auth", res.token);
-      setDialog({ open: true, title: "修改成功", content: "您的登錄密碼已成功更新", type: "success", onConfirm: closeDialog, onCancel: undefined });
+      setDialog({ 
+        open: true, title: "修改成功", content: "您的登錄密碼已更新。", type: "success", 
+        onConfirm: closeDialog 
+      });
       setPwd("");
-      setConfirmPwd("");
+      setRePwd("");
     } catch (e) {
-      setDialog({ open: true, title: "修改失敗", content: "密碼修改失敗，請稍後重試", type: "error", onConfirm: closeDialog, onCancel: undefined });
+      setDialog({ 
+        open: true, title: "修改失敗", content: "服務器拒絕了請求，請稍後重試。", type: "error", 
+        onConfirm: closeDialog 
+      });
     }
   };
 
-  // 2. 处理导出
+  // 2. 导出逻辑
   const handleExport = async () => {
     const data = await api("EXPORT_ALL");
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: "application/json" }));
-    a.download = `aero_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `aero_backup_${new Date().toISOString().slice(0,10)}.json`;
     a.click();
   };
 
-  // 3. 处理导入（带二次确认）
-  const handleImport = (e: any) => {
+  // 3. 导入逻辑（带二次确认）
+  const onFileChange = (e: any) => {
     const file = e.target.files[0];
     if (!file) return;
-    e.target.value = null; // 重置 input，允许重复选择同一文件
+    e.target.value = ''; // 清空 input 允许重复选择
 
     setDialog({
       open: true,
       title: "覆蓋警告",
-      content: "導入操作將會覆蓋當前所有資料且無法撤銷，您確定要繼續嗎？",
+      content: "此操作將清除當前所有數據並導入備份文件，確定要繼續嗎？",
       type: "error",
-      onCancel: closeDialog,
+      onCancel: closeDialog, // 触发双按钮模式
       onConfirm: () => {
         closeDialog();
         const reader = new FileReader();
         reader.onload = async (ev: any) => {
           try {
             await api("IMPORT_ALL", { backupData: JSON.parse(ev.target.result) });
-            fetchAllData();
-            setDialog({ open: true, title: "導入成功", content: "備份資料已成功恢復", type: "success", onConfirm: closeDialog, onCancel: undefined });
+            setDialog({ 
+              open: true, title: "導入成功", content: "數據已成功恢復，頁面將刷新。", type: "success", 
+              onConfirm: () => { closeDialog(); fetchAllData(); } 
+            });
           } catch (err) {
-            setDialog({ open: true, title: "導入失敗", content: "無法解析備份文件", type: "error", onConfirm: closeDialog, onCancel: undefined });
+            setDialog({ open: true, title: "文件錯誤", content: "無法解析該 JSON 文件。", type: "error", onConfirm: closeDialog });
           }
         };
         reader.readAsText(file);
@@ -1921,112 +1930,123 @@ function MeView({ setThemeKey, themeKey, setAuth, api, fetchAllData, THEMES }: a
     });
   };
 
-  // 4. 处理退出登录（带二次确认）
+  // 4. 退出登录（带二次确认）
   const handleLogout = () => {
     setDialog({
       open: true,
       title: "確認退出",
-      content: "您確定要退出當前帳號嗎？",
-      type: "error", // 使用 error 样式呈现警告感
+      content: "您確定要退出當前賬戶嗎？",
+      type: "error",
       onCancel: closeDialog,
       onConfirm: () => {
-        closeDialog();
         localStorage.removeItem("aero_auth");
         setAuth(null);
+        closeDialog();
       }
     });
   };
 
   return (
-    <>
-      <div className="space-y-6">
-        
-        {/* 密码修改模块 */}
-        <div className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[32px] space-y-5">
-          <div className="space-y-1">
-            <h3 className="font-bold flex items-center gap-2 text-lg"><KeyRound className="w-5 h-5 text-[var(--md-primary)]"/> 登錄密碼修改</h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400 pl-7">建議定期修改密碼以保障您的帳戶安全</p>
-          </div>
-          <div className="flex flex-col gap-3">
-            <input 
-              type="password" 
-              placeholder="輸入新密碼 (至少6位)" 
-              value={pwd} 
-              onChange={e => setPwd(e.target.value)} 
-              className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none focus:ring-2 focus:ring-[var(--md-primary)] transition-all" 
-            />
-            <input 
-              type="password" 
-              placeholder="再次確認新密碼" 
-              value={confirmPwd} 
-              onChange={e => setConfirmPwd(e.target.value)} 
-              className="w-full bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none focus:ring-2 focus:ring-[var(--md-primary)] transition-all" 
-            />
-            <motion.button 
-              whileTap={{ scale: 0.98 }} 
-              onClick={handlePasswordChange} 
-              className="w-full mt-2 py-4 bg-[var(--md-primary)] text-[var(--md-on-primary)] font-bold rounded-2xl shadow-sm"
-            >
-              確認修改
-            </motion.button>
+    <div className="space-y-6 pb-10">
+      {/* 密码修改卡片 */}
+      <div className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[32px] space-y-4 shadow-sm">
+        <h3 className="font-bold flex items-center gap-2 text-[var(--md-on-surface)]">
+          <KeyRound className="w-5 h-5 text-[var(--md-primary)]"/> 登錄密碼修改
+        </h3>
+        <div className="flex flex-col gap-4">
+          <input 
+            type="password" 
+            placeholder="輸入新密碼" 
+            value={pwd} 
+            onChange={e=>setPwd(e.target.value)} 
+            className="bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none border border-transparent focus:border-[var(--md-primary)] focus:bg-[var(--md-surface-container-high)] transition-all" 
+          />
+          <input 
+            type="password" 
+            placeholder="確認新密碼" 
+            value={rePwd} 
+            onChange={e=>setRePwd(e.target.value)} 
+            className="bg-white dark:bg-[#111318] p-4 rounded-2xl outline-none border border-transparent focus:border-[var(--md-primary)] focus:bg-[var(--md-surface-container-high)] transition-all" 
+          />
+          <div className="flex justify-end">
+            <MdFilledButton onClick={handlePasswordChange}>
+              <MdIcon slot="icon"><Save className="w-4 h-4"/></MdIcon>
+              保存密碼
+            </MdFilledButton>
           </div>
         </div>
-
-        {/* 备份与还原模块 */}
-        <div className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[32px] space-y-5">
-          <div className="space-y-1">
-            <h3 className="font-bold flex items-center gap-2 text-lg"><Save className="w-5 h-5 text-[var(--md-primary)]"/> 備份與還原</h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400 pl-7">將本地配置導出為文件，或從文件中恢復</p>
-          </div>
-          <div className="flex gap-3">
-            <motion.button 
-              whileTap={{ scale: 0.95 }} 
-              onClick={handleExport} 
-              className="flex-1 flex items-center justify-center gap-2 bg-[var(--md-primary-container)] text-[var(--md-on-primary-container)] py-4 rounded-2xl font-bold"
-            >
-              <Download className="w-5 h-5" /> 導出 JSON
-            </motion.button>
-            <motion.label 
-              whileTap={{ scale: 0.95 }} 
-              className="flex-1 flex items-center justify-center gap-2 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 py-4 rounded-2xl font-bold cursor-pointer"
-            >
-              <Upload className="w-5 h-5" /> 導入 JSON
-              <input type="file" accept=".json" className="hidden" onChange={handleImport} />
-            </motion.label>
-          </div>
-        </div>
-
-        {/* 主题配色模块 */}
-        <div className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[32px] space-y-5">
-          <div className="space-y-1">
-            <h3 className="font-bold flex items-center gap-2 text-lg"><Palette className="w-5 h-5 text-[var(--md-primary)]"/> 面板主題配色</h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400 pl-7">個性化您的 MD3 視覺體驗</p>
-          </div>
-          <div className="grid grid-cols-4 gap-3">
-            {THEMES && Object.entries(THEMES).map(([key, colors]: any) => (
-              <motion.button 
-                whileTap={{ scale: 0.8 }} 
-                key={key} 
-                onClick={() => setThemeKey(key)} 
-                className={`h-12 rounded-2xl transition-all ${themeKey === key ? 'ring-4 ring-offset-2 dark:ring-offset-[#111318]' : ''}`} 
-                style={{ backgroundColor: colors.primary, borderColor: colors.primaryContainer }} 
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* 退出登录 */}
-        <motion.button 
-          whileTap={{ scale: 0.98 }} 
-          onClick={handleLogout} 
-          className="w-full flex items-center justify-center py-4 text-red-600 bg-red-100 dark:bg-red-900/20 dark:text-red-400 rounded-full font-bold transition-colors"
-        >
-          <LogOut className="w-5 h-5 mr-2" /> 退出登入
-        </motion.button>
       </div>
 
-      {/* 挂载弹窗组件 */}
+      {/* 备份还原卡片 */}
+      <div className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[32px] space-y-4 shadow-sm">
+        <h3 className="font-bold flex items-center gap-2 text-[var(--md-on-surface)]">
+          <Save className="w-5 h-5 text-[var(--md-primary)]"/> 備份與還原
+        </h3>
+        <div className="grid grid-cols-2 gap-4">
+          <MdTonalButton onClick={handleExport}>
+             <MdIcon slot="icon"><Download className="w-4 h-4"/></MdIcon>
+             導出 JSON
+          </MdTonalButton>
+
+          <div className="relative">
+             <MdOutlinedButton class="w-full">
+                <MdIcon slot="icon"><Upload className="w-4 h-4"/></MdIcon>
+                導入 JSON
+             </MdOutlinedButton>
+             {/* 透明 Input 覆盖实现点击 */}
+             <input 
+               type="file" 
+               accept=".json" 
+               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" 
+               onChange={onFileChange} 
+             />
+          </div>
+        </div>
+      </div>
+
+      {/* 主题配色卡片 */}
+      <div className="bg-[#F0F4EF] dark:bg-[#202522] p-6 rounded-[32px] space-y-4 shadow-sm">
+        <h3 className="font-bold flex items-center gap-2 text-[var(--md-on-surface)]">
+          <Palette className="w-5 h-5 text-[var(--md-primary)]"/> 面板主題配色
+        </h3>
+        <div className="grid grid-cols-4 sm:grid-cols-6 gap-4">
+          {Object.entries(THEMES || {}).map(([key, colors]: any) => (
+            <motion.button 
+              key={key} 
+              whileTap={{ scale: 0.8 }}
+              onClick={() => setThemeKey(key)} 
+              className={`h-12 w-full rounded-2xl relative transition-all duration-300 shadow-sm ${themeKey === key ? 'ring-2 ring-[var(--md-primary)] scale-105' : 'hover:scale-105'}`}
+              style={{ backgroundColor: colors.primary }}
+            >
+              {themeKey === key && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                   <div className="bg-white/30 rounded-full p-1">
+                      <CheckCircle2 className="w-5 h-5 text-white" />
+                   </div>
+                </div>
+              )}
+            </motion.button>
+          ))}
+        </div>
+      </div>
+
+      {/* 退出按钮 */}
+      <div className="pt-4">
+        <MdFilledButton 
+          onClick={handleLogout} 
+          class="w-full h-14 text-lg"
+          style={{ 
+            '--md-sys-color-primary': 'var(--md-sys-color-error)', // 强制红色
+            '--md-sys-color-on-primary': 'var(--md-sys-color-on-error)' 
+          }}
+        >
+          <MdIcon slot="icon"><LogOut className="w-5 h-5"/></MdIcon>
+          退出登入
+        </MdFilledButton>
+      </div>
+
+      {/* 挂载全局弹窗 */}
       <AlertDialog {...dialog} />
-    </>
+    </div>
   );
 }
