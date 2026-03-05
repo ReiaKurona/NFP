@@ -14,15 +14,15 @@ import {
 } from "lucide-react";
 
 
-// 如果你的项目开启了严格模式，加入这段全局声明可以防止 TypeScript 对 Web Components 报错
+// 如果你的项目开启了严格模式，加入这段全局声明可以防止 TypeScript 对 Web Components 报错（MD3组件）
 declare global {
   namespace JSX {
     interface IntrinsicElements {
       'md-filled-button': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
       'md-icon-button': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
-      'md-fab': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
+      'md-fab': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & { lowered?: string | boolean };
       'md-ripple': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
-      'md-icon': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
+      'md-icon': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & { slot?: string };
     }
   }
 }
@@ -226,21 +226,6 @@ function NavItem({ icon, label, active, onClick }: any) {
     </motion.button>
   );
 }
-
-// （MD3）告诉 TypeScript 这些是合法的自定义组件标签，不要报错！
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      'md-filled-button': any;
-      'md-icon-button': any;
-      'md-fab': any;
-      'md-ripple': any;
-      'md-icon': any;
-    }
-  }
-}
-
-
 
 // 通用 MD3 风格弹窗组件
 function AlertDialog({ open, title, content, type = "error", onConfirm, onCancel }: any) {
