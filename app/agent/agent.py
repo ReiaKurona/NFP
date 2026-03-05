@@ -97,7 +97,8 @@ class SystemUtils:
         nft += "table ip aeronode {\n"
         # 1. PREROUTING 鏈 (DNAT：目標地址轉換，用於將外部請求端口映射到目標服務器)
         nft += "    chain prerouting {\n"
-        nft += "        type nat hook prerouting priority -100;\n"
+        # [修改] 優先級調整為 -110，確保在 Docker (-100) 之前執行，避免規則被覆蓋
+        nft += "        type nat hook prerouting priority -110;\n"
         
         for r in rules:
             p = r.get("protocol", "tcp") # 協議，默認 TCP
@@ -123,6 +124,25 @@ class SystemUtils:
             # 對發往落地機的流量進行源 IP 偽裝 (替換為本機 IP)
             nft += f"        ip daddr {dip} masquerade\n" 
             
+        nft += "    }\n"
+        nft += "}\n"
+
+        # [新增] 針對 Docker 環境的修復：在 filter 表的 DOCKER-USER 鏈中放行轉發流量
+        # 防止因 FORWARD 鏈默認 DROP 策略導致轉發失敗
+        nft += "\n# Fix for Docker DROP policy in FORWARD chain\n"
+        nft += "table ip filter {\n"
+        nft += "    chain DOCKER-USER {\n"
+        for r in rules:
+            p = r.get("protocol", "tcp")
+            dip = r["dest_ip"]
+            dport = r["dest_port"]
+            
+            # 注意：此處匹配的是 DNAT 之後的目標 IP (落地機 IP)
+            if p == "tcp,udp" or p == "tcp+udp":
+                nft += f"        ip daddr {dip} tcp dport {dport} accept\n"
+                nft += f"        ip daddr {dip} udp dport {dport} accept\n"
+            else:
+                nft += f"        ip daddr {dip} {p} dport {dport} accept\n"
         nft += "    }\n"
         nft += "}\n"
         
@@ -233,7 +253,7 @@ def loop():
     last_sync = time.time()
     
     while True:
-        interval = 75 # 默認心跳間隔 75 秒
+        interval = 15 # 默認心跳間隔 75 秒
         try:
             # 構建心跳數據包（包含節點認證和系統狀態）
             payload = { "nodeId": CONFIG["node_id"], "token": CONFIG["token"], "stats": monitor.get_stats() }
