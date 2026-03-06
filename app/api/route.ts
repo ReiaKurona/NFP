@@ -75,6 +75,20 @@ export async function POST(req: Request) {
        return NextResponse.json({ success: true });
     }
 
+    // 【新增】編輯節點 (允許重新編輯清空或修改 IP)
+    if (action === "EDIT_NODE") {
+       const { node } = data;
+       const nodes: any = await kv.hgetall("nodes");
+       if (nodes && nodes[node.id]) {
+           // 合併並保留 lastSeen, stats 等原有狀態
+           nodes[node.id] = { ...nodes[node.id], ...node };
+           await kv.del("nodes");
+           await kv.hset("nodes", nodes);
+           return NextResponse.json({ success: true });
+       }
+       return NextResponse.json({ error: "Node not found" }, { status: 404 });
+    }
+
     // 刪除節點
     if (action === "DELETE_NODE") {
        const nodes: any = await kv.hgetall("nodes");
