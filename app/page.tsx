@@ -801,8 +801,10 @@ function NodesView({ nodes, api, fetchAllData }: any) {
       setDialog({ isOpen: true, type: 'error', title: '保存失敗', message: '請填寫節點名稱' });
       return;
     }
-    if (!node.ip.trim() || !validateIPOrDomain(node.ip.trim())) {
-      setDialog({ isOpen: true, type: 'error', title: '保存失敗', message: '請填寫正確格式的公網 IP 或域名' });
+    
+    // 【修改点】：IP现在是可选的，只有在用户填写了内容时才进行格式校验
+    if (node.ip && node.ip.trim() && !validateIPOrDomain(node.ip.trim())) {
+      setDialog({ isOpen: true, type: 'error', title: '保存失敗', message: '請填寫正確格式的公網 IP 或域名，或留空等待自動上報' });
       return;
     }
 
@@ -927,7 +929,10 @@ function NodesView({ nodes, api, fetchAllData }: any) {
                               </span>
                               <span className="text-[18px] font-bold text-[#191C1A] dark:text-white line-clamp-1">{n.name}</span>
                             </div>
-                            <div className="text-[13px] font-mono font-bold text-gray-500">{n.ip}</div>
+                            {/* 【修改点】：IP 为空时显示等待上报 */}
+                            <div className="text-[13px] font-mono font-bold text-gray-500">
+                              {n.ip ? n.ip : <span className="text-[12px] italic opacity-70">等待自動上報...</span>}
+                            </div>
                           </div>
                           <div className="flex bg-[#F8FAF7] dark:bg-white/5 rounded-2xl p-1">
                             <motion.button whileTap={{ scale: 0.9 }} onClick={() => setEditing({ index: idx, node: { ...n } })} className="p-2 text-gray-500 hover:text-[var(--md-primary)] transition-colors">
@@ -981,7 +986,10 @@ function NodesView({ nodes, api, fetchAllData }: any) {
                             </span>
                           </td>
                           <td className="py-3 px-5 font-bold text-[#404943] dark:text-gray-300">{n.name}</td>
-                          <td className="py-3 px-5 font-mono text-[#191C1A] dark:text-white font-bold">{n.ip}</td>
+                          {/* 【修改点】：IP 为空时显示等待上报 */}
+                          <td className="py-3 px-5 font-mono text-[#191C1A] dark:text-white font-bold">
+                            {n.ip ? n.ip : <span className="text-gray-400 dark:text-gray-500 text-[13px] italic font-normal">等待自動上報...</span>}
+                          </td>
                           <td className="py-3 px-5 flex justify-end gap-2">
                             <motion.button whileTap={{ scale: 0.9 }} onClick={() => openInstallDialog(n)} className="p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full transition-colors" title="獲取指令">
                               <Terminal className="w-4 h-4" />
@@ -1039,12 +1047,13 @@ function NodesView({ nodes, api, fetchAllData }: any) {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-[13px] font-bold text-gray-500 ml-1">公網 IP 或域名</label>
+                  {/* 【修改点】：标签和占位符提示 */}
+                  <label className="text-[13px] font-bold text-gray-500 ml-1">公網 IP 或域名 (可選)</label>
                   <input 
                     value={editing.node.ip} 
                     onChange={e => setEditing({ ...editing, node: { ...editing.node, ip: e.target.value } })} 
                     className="w-full bg-[#F0F4EF] dark:bg-[#202522] p-4 rounded-[20px] font-mono text-sm text-[#191C1A] dark:text-white outline-none focus:ring-2 ring-[var(--md-primary)] transition-shadow" 
-                    placeholder="8.8.8.8 或 node.example.com" 
+                    placeholder="留空等待 Agent 自動上報，或手動填寫" 
                   />
                 </div>
 
@@ -1145,7 +1154,7 @@ function NodesView({ nodes, api, fetchAllData }: any) {
         )}
       </AnimatePresence>
 
-      {/* 居中氣泡提示 (Toast) - 完全符合淺/深色邏輯與手機 MD3 樣式 */}
+      {/* 居中氣泡提示 (Toast) */}
       <AnimatePresence>
         {toast.show && (
           <div className="fixed bottom-12 left-0 right-0 z-[100] flex justify-center pointer-events-none px-4">
@@ -1165,7 +1174,6 @@ function NodesView({ nodes, api, fetchAllData }: any) {
   );
 }
 
-// 規則編輯頁面
 // 規則編輯頁面
 function RulesView({ nodes, allRules, api, fetchAllData }: any) {
   const[selected, setSelected] = useState<string>(nodes[0]?.id || "");
