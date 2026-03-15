@@ -169,10 +169,10 @@ function NavItem({ icon, label, active, onClick }: any) {
  return (
   <motion.button
    layout // 启用布局动画，确保文字出现时容器平滑调整尺寸
-   // 【优化点1】：使用 variants 代理点击事件，使得内外元素能同时响应点击动作
+   // 使用 variants 代理点击事件，使得内外元素能同时响应点击动作
    whileTap="tap"
    variants={{ tap: { scale: 0.95 } }} // 保持原来的点击微缩反馈
-   onClick={}
+   onClick={} // 【修复点】：这里必须是 onClick={}，绝对不能是 onClick={}
    className="flex flex-col items-center justify-center flex-1 gap-1 relative outline-none py-2 h-[72px]"
   >
    {/* 图标容器：增加 overflow-hidden 以便完美裁切内部的 MD3 涟漪 */}
@@ -196,7 +196,7 @@ function NavItem({ icon, label, active, onClick }: any) {
      )}
     </AnimatePresence>
 
-    {/* --- 2. 【新增】：MD3 特有的内部涟漪 (State Layer) 肌理 --- */}
+    {/* --- 2. MD3 特有的内部涟漪 (State Layer) 肌理 --- */}
     {/* 居中放置一个隐形的圆，按下时使用纯 GPU 加速放大，由父级的 overflow-hidden 裁切，完美模拟原生安卓水波纹 */}
     <motion.div
      variants={{ tap: { scale: 3.5, opacity: 0.12 } }}
@@ -224,9 +224,7 @@ function NavItem({ icon, label, active, onClick }: any) {
    <AnimatePresence>
     {active && (
      <motion.span
-      // --- 【优化点2】：核心性能优化 ---
-      // 彻底抛弃导致掉帧的 `height: 0 -> auto`
-      // 改用纯 GPU 加速的 y 轴位移和透明度。外层 button 的 `layout` 会自动接管排版，平滑推上图标！
+      // 核心性能优化：抛弃导致掉帧的 height 动画，改用纯 GPU 加速的 y 轴位移和透明度
       initial={{ opacity: 0, y: 10 }} 
       animate={{ opacity: 1, y: 0 }} 
       exit={{ opacity: 0, y: 10 }}  
