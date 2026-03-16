@@ -169,12 +169,12 @@ function NavItem({ icon, label, active, onClick }: any) {
  return (
   <motion.button
    layout // 启用布局动画，确保文字出现时容器平滑调整尺寸
-   whileTap={{ scale: 0.95 }} // 完美保留你原有的点击微缩反馈
-   onClick={} // 完美保留你原有的事件接口
-   // 【唯一的小改动】：在这里加了一个 group 属性，用于触发下方的 CSS 涟漪
+   whileTap={{ scale: 0.95 }} // 【保留原有逻辑】：点击时的微缩反馈
+   onClick={} // ⚠️ 请确保你的编辑器里这里是 onClick={}，绝不能是 {}
+   // 【添加 group】：用于触发内部的 CSS 涟漪
    className="group flex flex-col items-center justify-center flex-1 gap-1 relative outline-none py-2 h-[72px]"
   >
-   {/* 图标容器：增加 overflow-hidden 以完美裁切内部的背景涟漪 */}
+   {/* 图标容器：增加 overflow-hidden 以便完美裁切内部的 MD3 涟漪 */}
    <div className="relative px-5 py-1 flex items-center justify-center overflow-hidden rounded-full">
      
     {/* 1. 激活背景 (胶囊状波纹) */}
@@ -195,9 +195,7 @@ function NavItem({ icon, label, active, onClick }: any) {
      )}
     </AnimatePresence>
 
-    {/* 2. 【MD3 特有肌理优化】：纯 CSS 状态涟漪层 (State Layer) 
-        不再使用可能导致编译器报错的 variants 逻辑，完全靠 Tailwind 触发响应
-        保持了你的动态取色机制不变！ */}
+    {/* 2. 【新增】：MD3 涟漪动画肌理 (纯 CSS 实现，不改变任何 JS 结构，保留动态采色) */}
     <div className={`absolute inset-0 rounded-full opacity-0 group-active:opacity-15 transition-opacity duration-200 z-0 ${
       active ? 'bg-[var(--md-on-primary-container)]' : 'bg-gray-500'
     }`} />
@@ -211,7 +209,7 @@ function NavItem({ icon, label, active, onClick }: any) {
        : 'text-gray-500'             // 未激活时：灰色
      }`}
     >
-     {}
+     {} {/* ⚠️ 请确保这里是 {}，绝不能是 {} */}
     </span>
    </div>
 
@@ -219,15 +217,15 @@ function NavItem({ icon, label, active, onClick }: any) {
    <AnimatePresence>
     {active && (
      <motion.span
-      // 【核心性能优化】：彻底删除导致掉帧的 height: 0 -> "auto" 动画。
-      // 外层 button 已经有 layout 属性，文字靠 y 轴位移和透明度消失时，父容器会自动平滑处理高度回弹！
-      initial={{ opacity: 0, y: 10 }} 
+      // 【性能优化核心】：完全移除了导致掉帧的 height: 0 -> "auto" 动画
+      // 外层本身已有 layout 属性，文字通过透明度和 Y 轴位移出现时，父级会自动平滑推开高度！流畅度翻倍！
+      initial={{ opacity: 0, y: 5 }} 
       animate={{ opacity: 1, y: 0 }} 
-      exit={{ opacity: 0, y: 10 }}  
+      exit={{ opacity: 0, y: 5 }}  
       transition={{ duration: 0.2, delay: 0.05 }} 
       className="text-[12px] font-bold text-[var(--md-primary)] overflow-hidden whitespace-nowrap"
      >
-      {}
+      {} {/* ⚠️ 请确保这里是 {}，绝不能是 {} */}
      </motion.span>
     )}
    </AnimatePresence>
