@@ -166,69 +166,88 @@ export default function App() {
 }
 //底部导航栏按钮动画逻辑实现
 function NavItem({ icon, label, active, onClick }: any) {
+ // 新增：用于记录点击次数，以触发纯正的不回缩涟漪
+ const [pressCount, setPressCount] = useState(0);
+
  return (
   <motion.button
-   layout // 启用布局动画，确保文字出现时容器平滑调整尺寸
-   whileTap={{ scale: 0.95 }} // 点击时的微缩反馈
+   // 【极致性能优化1】：去掉会导致整个 Flex 容器重排掉帧的 layout 属性
+   // 全部改用纯 GPU 加速的绝对定位与 Transform 动画
+   whileTap={{ scale: 0.95 }} // 依然保留点击整体微缩反馈
    onClick={ onClick } // 【防网页吞字符：加了空格】
-   className="group flex flex-col items-center justify-center flex-1 gap-1 relative outline-none py-2 h-[72px]"
+   onPointerDown={() => setPressCount(c => c + 1)} // 每次按下触发新涟漪
+   className="group flex flex-col items-center justify-center flex-1 relative outline-none h-[72px] cursor-pointer"
   >
-   {/* 【修复平移】：去掉了 overflow-hidden，让 layoutId 背景能自由跨按钮滑动！ */}
-   <div className="relative px-5 py-1 flex items-center justify-center">
-     
+   {/* 内部容器：容纳图标和背景 */}
+   <motion.div
+    // 【核心非线性动画】：MD3 标准缓动 [0.2, 0, 0, 1]，激活时平滑上浮
+    initial={false}
+    animate={{ y: active ? -10 : 0 }} 
+    transition={{ duration: 0.4, ease: [0.2, 0, 0, 1] }}
+    className="relative px-5 py-1 flex items-center justify-center z-10"
+   >
     {/* 1. 激活背景 (胶囊状波纹，跨按钮平移) */}
     <AnimatePresence>
      { active && (
       <motion.div
-       layoutId="nav-item-active-indicator" // 跨按钮滑动核心属性
-       initial={{ opacity: 0, scale: 0.5 }} 
-       animate={{ opacity: 1, scale: 1 }}  
-       exit={{ opacity: 0, scale: 0.5 }}  
-       transition={{ 
-        type: "spring", 
-        stiffness: 400, 
-        damping: 30 
-       }} 
-       className="absolute inset-0 bg-[var(--md-primary-container)] rounded-full" 
+       layoutId="nav-item-active-indicator"
+       initial={{ opacity: 0, scale: 0.5 }}
+       animate={{ opacity: 1, scale: 1 }}
+       exit={{ opacity: 0, scale: 0.5 }}
+       transition={{
+        type: "spring",
+        stiffness: 300,
+        damping: 25
+       }}
+       className="absolute inset-0 bg-[var(--md-primary-container)] rounded-full z-0"
       />
      )}
     </AnimatePresence>
 
-    {/* 2. 【优化版 MD3 涟漪】：纯 GPU 渲染 (scale + opacity)，放慢扩散速度 (duration-500) */}
-    <div 
-     className={`absolute inset-0 rounded-full transform scale-50 opacity-0 group-active:scale-100 group-active:opacity-15 transition-all duration-500 ease-out z-0 pointer-events-none ${
-      active ? 'bg-[var(--md-on-primary-container)]' : 'bg-gray-500'
-     }`} 
-    />
+    {/* 2. 【纯正 MD3 涟漪】：松手不收缩，放慢扩散，纯 GPU 绘制 */}
+    { pressCount > 0 && (
+     <motion.div
+      key={ pressCount } // 每次点击更换 key，强制重新播放扩散动画
+      initial={{ scale: 0.2, opacity: 0 }}
+      animate={{ scale: 2.5, opacity: [0, 0.12, 0] }} // 展开的同时逐渐变透明
+      transition={{
+       duration: 0.8, // 放慢涟漪扩散速度
+       ease: "easeOut",
+       times: [0, 0.2, 1] // 控制透明度：0%->20%时最亮，然后慢慢消散到 0
+      }}
+      className={`absolute inset-0 rounded-full z-0 pointer-events-none ${
+       active ? 'bg-[var(--md-on-primary-container)]' : 'bg-gray-500'
+      }`}
+     />
+    )}
 
     {/* 3. 图标层 */}
-    {/* z-10 确保图标始终位于背景和涟漪之上 */}
-    <span 
-     className={`relative z-10 transition-colors duration-200 ${
-      active 
-       ? 'text-[var(--md-on-primary-container)]' // 激活时：取主容器上的对比色
-       : 'text-gray-500'             // 未激活时：灰色
+    <span
+     className={`relative z-10 transition-colors duration-400 ease-[cubic-bezier(0.2,0,0,1)] ${
+      active
+       ? 'text-[var(--md-on-primary-container)]'
+       : 'text-gray-500'
      }`}
     >
      { icon } {/* 【防网页吞字符：加了空格】 */}
     </span>
-   </div>
+   </motion.div>
 
-   {/* 4. 文字标签 (仅在激活时出现) */}
-   <AnimatePresence>
-    { active && (
-     <motion.span
-      // 【满帧性能优化】：纯 GPU 渲染的 Y轴平移，去除了卡顿的 height 动画
-      initial={{ opacity: 0, y: 5 }} 
-      animate={{ opacity: 1, y: 0 }} 
-      exit={{ opacity: 0, y: 5 }}  
-      transition={{ duration: 0.2, delay: 0.05 }} 
-      className="text-[12px] font-bold text-[var(--md-primary)] overflow-hidden whitespace-nowrap"
-     >
-      { label } {/* 【防网页吞字符：加了空格】 */}
-     </motion.span>
-    )}
-   </AnimatePresence>
+   {/* 4. 文字标签 (绝对定位) */}
+   {/* 【极致性能优化2】：脱离文档流绝对定位，完全不挤压图标引起重排！ */}
+   {/* 仅靠 GPU 处理 Y 轴位移和透明度，彻底解决手机 Chrome 掉帧问题 */}
+   <motion.span
+    initial={false}
+    animate={{
+     opacity: active ? 1 : 0,
+     y: active ? 14 : 20, // 激活时从图标下方浮起
+     scale: active ? 1 : 0.85
+    }}
+    transition={{ duration: 0.4, ease: [0.2, 0, 0, 1] }} // MD3 标准高级缓动曲线
+    className="absolute text-[12px] font-bold text-[var(--md-primary)] whitespace-nowrap pointer-events-none"
+   >
+    { label } {/* 【防网页吞字符：加了空格】 */}
+   </motion.span>
   </motion.button>
  );
 }
