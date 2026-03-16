@@ -170,20 +170,20 @@ function NavItem({ icon, label, active, onClick }: any) {
   <motion.button
    layout // 启用布局动画，确保文字出现时容器平滑调整尺寸
    whileTap={{ scale: 0.95 }} // 点击时的微缩反馈
-   onClick={ onClick } 
+   onClick={ onClick } // 【防网页吞字符：加了空格】
    className="group flex flex-col items-center justify-center flex-1 gap-1 relative outline-none py-2 h-[72px]"
   >
-   {/* 图标容器：增加 overflow-hidden 以便完美裁切内部的背景涟漪 */}
-   <div className="relative px-5 py-1 flex items-center justify-center overflow-hidden rounded-full">
+   {/* 【修复平移】：去掉了 overflow-hidden，让 layoutId 背景能自由跨按钮滑动！ */}
+   <div className="relative px-5 py-1 flex items-center justify-center">
      
-    {/* 1. 激活背景 (胶囊状波纹) */}
+    {/* 1. 激活背景 (胶囊状波纹，跨按钮平移) */}
     <AnimatePresence>
      { active && (
       <motion.div
-       layoutId="nav-item-active-indicator" // 如果有多个NavItem，这能实现跨按钮的滑动效果，单个使用也能保证平滑
-       initial={{ opacity: 0, scale: 0.5 }} // 初始状态：透明且缩小（模拟从中心开始）
-       animate={{ opacity: 1, scale: 1 }}  // 激活状态：完全显示且填充
-       exit={{ opacity: 0, scale: 0.5 }}  // 退出状态：缩小并消失
+       layoutId="nav-item-active-indicator" // 跨按钮滑动核心属性
+       initial={{ opacity: 0, scale: 0.5 }} 
+       animate={{ opacity: 1, scale: 1 }}  
+       exit={{ opacity: 0, scale: 0.5 }}  
        transition={{ 
         type: "spring", 
         stiffness: 400, 
@@ -194,13 +194,15 @@ function NavItem({ icon, label, active, onClick }: any) {
      )}
     </AnimatePresence>
 
-    {/* 2. 【MD3 涟漪优化】：纯 CSS 实现的按压反馈，保留动态采色 */}
-    <div className={`absolute inset-0 rounded-full opacity-0 group-active:opacity-15 transition-opacity duration-200 z-0 ${
+    {/* 2. 【优化版 MD3 涟漪】：纯 GPU 渲染 (scale + opacity)，放慢扩散速度 (duration-500) */}
+    <div 
+     className={`absolute inset-0 rounded-full transform scale-50 opacity-0 group-active:scale-100 group-active:opacity-15 transition-all duration-500 ease-out z-0 pointer-events-none ${
       active ? 'bg-[var(--md-on-primary-container)]' : 'bg-gray-500'
-    }`} />
+     }`} 
+    />
 
     {/* 3. 图标层 */}
-    {/* z-10 确保图标始终位于背景之上 */}
+    {/* z-10 确保图标始终位于背景和涟漪之上 */}
     <span 
      className={`relative z-10 transition-colors duration-200 ${
       active 
@@ -208,7 +210,7 @@ function NavItem({ icon, label, active, onClick }: any) {
        : 'text-gray-500'             // 未激活时：灰色
      }`}
     >
-     { icon } 
+     { icon } {/* 【防网页吞字符：加了空格】 */}
     </span>
    </div>
 
@@ -216,14 +218,14 @@ function NavItem({ icon, label, active, onClick }: any) {
    <AnimatePresence>
     { active && (
      <motion.span
-      // 【核心性能提升】：彻底抛弃掉帧的 height 动画，改用纯 GPU 的 Y轴位移！流畅度翻倍！
+      // 【满帧性能优化】：纯 GPU 渲染的 Y轴平移，去除了卡顿的 height 动画
       initial={{ opacity: 0, y: 5 }} 
       animate={{ opacity: 1, y: 0 }} 
       exit={{ opacity: 0, y: 5 }}  
       transition={{ duration: 0.2, delay: 0.05 }} 
       className="text-[12px] font-bold text-[var(--md-primary)] overflow-hidden whitespace-nowrap"
      >
-      { label }
+      { label } {/* 【防网页吞字符：加了空格】 */}
      </motion.span>
     )}
    </AnimatePresence>
