@@ -166,16 +166,14 @@ export default function App() {
 }
 // 底部导航栏按钮动画逻辑实现  GPU 硬件加速
 function NavItem({ icon, label, active, onClick }: any) {
- // 【终极优化1】：使用 useAnimation。
- // 这样触发涟漪时，完全不会引起任何 React 组件的重新渲染，0 CPU 消耗，直接驱动 GPU！
  const rippleControls = useAnimation();
 
  const handlePointerDown = () => {
-  // 瞬间重置涟漪，然后播放扩散，完全脱离 React 的 setState 机制
+  // 瞬间重置涟漪，然后播放扩散，脱离 React 渲染树
   rippleControls.set({ scale: 0.2, opacity: 0 });
   rippleControls.start({
    scale: 2.5,
-   opacity: [0, 0.12, 0], // 扩散并平滑渐隐
+   opacity: [0, 0.12, 0], // 渐显后平滑渐隐
    transition: { duration: 0.7, ease: "easeOut", times: [0, 0.2, 1] }
   });
  };
@@ -184,17 +182,16 @@ function NavItem({ icon, label, active, onClick }: any) {
   <motion.button
    whileTap={{ scale: 0.92 }} 
    onClick={ onClick } // 【防网页吞字符：加了空格】
-   onPointerDown={ handlePointerDown } // 使用纯底层的 GPU 指令，不触发 React 渲染！
+   onPointerDown={ handlePointerDown }
    className="group flex flex-col items-center justify-center flex-1 relative outline-none h-[72px] cursor-pointer"
-   // 【终极优化2】：关闭安卓 Chrome 默认的点击高亮，强制开启 3D 硬件加速
-   style={{ WebkitTapHighlightColor: "transparent", transform: "translateZ(0)" }}
+   // 仅关闭安卓默认点击高亮，不做过度优化
+   style={{ WebkitTapHighlightColor: "transparent" }}
   >
    <motion.div
     initial={false}
     animate={{ y: active ? -10 : 0 }} 
     transition={{ duration: 0.4, ease: [0.2, 0, 0, 1] }}
     className="relative px-5 py-1 flex items-center justify-center z-10"
-    style={{ transform: "translateZ(0)" }}
    >
     {/* 1. 激活背景 (胶囊状波纹，跨按钮平移) */}
     <AnimatePresence>
@@ -204,20 +201,22 @@ function NavItem({ icon, label, active, onClick }: any) {
        initial={{ opacity: 0, scale: 0.5 }}
        animate={{ opacity: 1, scale: 1 }}
        exit={{ opacity: 0, scale: 0.5 }}
-       transition={{ type: "spring", stiffness: 350, damping: 25 }}
+       // 【FPS 修复】：不再给 layoutId 加强制硬件加速，交给 Framer 引擎自行调度计算
+       // 加快了 stiffness，消除平移时的拖泥带水感，更加干脆利落
+       transition={{ type: "spring", stiffness: 450, damping: 35 }}
        className="absolute inset-0 bg-[var(--md-primary-container)] rounded-full z-0"
-       style={{ transform: "translateZ(0)" }}
       />
      )}
     </AnimatePresence>
 
-    {/* 2. 【纯正 MD3 涟漪】：由 useAnimation 驱动，没有 DOM 刷新负担 */}
+    {/* 2. 【纯正 MD3 涟漪】：修复了刚进页面全灰的 Bug！ */}
     <motion.div
+     // 【极其重要】：必须加上初始透明度为 0，否则没点之前就是灰块！
+     initial={{ scale: 0.2, opacity: 0 }} 
      animate={ rippleControls }
      className={`absolute inset-0 rounded-full z-0 pointer-events-none ${
       active ? 'bg-[var(--md-on-primary-container)]' : 'bg-gray-500'
      }`}
-     style={{ transform: "translateZ(0)", willChange: "transform, opacity" }}
     />
 
     {/* 3. 图标层 */}
@@ -233,9 +232,6 @@ function NavItem({ icon, label, active, onClick }: any) {
    </motion.div>
 
    {/* 4. 文字标签 (绝对定位) */}
-   {/* 【终极优化3】：移除了 AnimatePresence！ */}
-   {/* 我们不再让文字 DOM 频繁被创造和销毁，而是长久存在于页面上，仅通过 opacity 隐藏。
-       这彻底消灭了手机浏览器排版引擎 Layout Thrashing 导致的卡顿！ */}
    <motion.span
     initial={false}
     animate={{
@@ -245,7 +241,6 @@ function NavItem({ icon, label, active, onClick }: any) {
     }}
     transition={{ duration: 0.4, ease: [0.2, 0, 0, 1] }} 
     className="absolute text-[12px] font-bold text-[var(--md-primary)] whitespace-nowrap pointer-events-none"
-    style={{ transform: "translateZ(0)", willChange: "transform, opacity" }}
    >
     { label } {/* 【防网页吞字符：加了空格】 */}
    </motion.span>
